@@ -250,7 +250,7 @@ jobs:
         run: pnpm build
 
       - name: Setup Go for Crabbox CLI
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v6.5.0
         with:
           go-version: "1.26.x"
           cache: false
