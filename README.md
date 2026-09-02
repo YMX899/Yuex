@@ -2,116 +2,99 @@
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 
-Yuex 是 Agent 产品的生产运行层。产品 Backend 先确认用户身份和权限，选择本次要使用的资料和 Agent，再把任务交给 Yuex；Yuex 负责这次任务（下文称为一个 `Run`）的排队、并发控制、执行记录和故障恢复。
+Yuex 是放在产品 Backend 与 Agent Harness 之间的生产运行层。Backend 决定“谁可以发起任务、允许读取什么、最后写到哪里、如何计费”；Yuex 决定“一次 Agent 执行如何排队、由哪台机器执行、发生故障后怎样接管、事件和原始用量怎样留痕”。
 
-负责执行模型、Session 和 Tool 循环的组件称为 Agent Harness。当前实现接入 [OpenClaw](https://github.com/openclaw/openclaw)。感谢 OpenClaw 社区提供开源的 Agent Loop、Session 和 Tool 基础。OpenClaw Core 不是本项目的原创代码；Yuex 实现的是它上方的生产控制层。通过实现新的 Harness Driver，也可以接入 Codex 或其他 Agent Harness。
+当前 Driver 接入 [OpenClaw](https://github.com/openclaw/openclaw)。感谢 OpenClaw 社区提供开源的 Agent Loop、Session 与 Tool 基础。OpenClaw Agent Core 不是本项目的原创代码；本仓库实现的是它上方的并发控制、Workspace 装配、执行所有权和恢复机制。Driver 是边界，后续也可以替换为 Codex 或其他优秀的 Agent Harness。
 
-> 本仓库是从现有工程复制的实现快照。核心机制来自实际运行代码，但部分 Go import、持久化和回调仍与原 Backend 相连。当前版本用于阅读代码和继续拆分，不是开箱即用的独立发行版。
+> 本仓库是从实际工程中复制出来的 Runtime 快照。部分 Go import、持久化接口和回调仍保留原系统边界，因此它目前适合阅读、拆分和二次集成，不是下载后即可独立启动的发行包。
 
 ## Architecture
 
-下图同时表达两件事：上半部分列出可以采用 Yuex 的不同产品；下半部分展开一套 Yuex Runtime 的内部结构。
-
-**虚线表示复用同一套代码和接口，不是网络请求。实线表示一个产品部署内部的实际调用。**
+客服、内容创作、研究助手和企业自动化是四个彼此独立的产品示例。它们可以分别复用这套 Runtime 代码和 API，并不表示四个产品必须连接同一个在线实例。图中的虚线表示“可以采用这套代码”，实线才表示一次部署内的真实调用。
 
 ```mermaid
 flowchart TB
-    subgraph Products[独立产品示例：彼此并列，不互相调用]
+    subgraph PRODUCTS[四种独立产品，各自拥有 Frontend、Backend 和数据]
         direction LR
-        P1[客服 SaaS<br/>Frontend + 客服 Backend]
-        P2[内容创作 App<br/>Frontend + 内容 Backend]
-        P3[研究助手<br/>Frontend + 研究 Backend]
-        P4[企业自动化<br/>Frontend + 自动化 Backend]
+        P1[客服 SaaS]
+        P2[内容创作 App]
+        P3[研究助手]
+        P4[企业自动化]
     end
 
-    P1 -. 各自部署一套 .-> ENTRY
-    P2 -. 各自部署一套 .-> ENTRY
-    P3 -. 各自部署一套 .-> ENTRY
-    P4 -. 各自部署一套 .-> ENTRY
+    P1 -. 可单独部署 .-> ENTRY
+    P2 -. 可单独部署 .-> ENTRY
+    P3 -. 可单独部署 .-> ENTRY
+    P4 -. 可单独部署 .-> ENTRY
 
-    subgraph Yuex[Yuex Runtime 部署模板：每个产品各自一套，图中只展开一次]
+    subgraph DEPLOYMENT[一套 Yuex 部署，内部结构只展开一次]
         direction TB
-
         ENTRY[Backend Adapter / SDK]
-        API[Runtime API v1<br/>capabilities / submit / status / events / abort]
+        API[Runtime API v1<br/>capabilities · submit · status · events · abort]
 
-        subgraph Planning[Planning & Input]
+        subgraph PREPARE[Planning and Input]
             direction LR
-            CATALOG[Agent Profile Resolver<br/>L1 Router / Skill Registry]
-            PLAN[Capability Planner<br/>AgentRunPlan / Runtime Config]
-            WORKSPACE[Workspace Composer<br/>Manifest / Attachment / Prompt Compiler]
+            ROUTER[Agent Profile Router<br/>Catalog · Skill Registry]
+            PLANNER[Capability Planner<br/>AgentRunPlan · Tool Policy]
+            COMPOSER[Workspace Composer<br/>Manifest · Attachments]
         end
 
-        subgraph Control[Runtime Control Plane]
+        subgraph CONTROL[Runtime Control Plane]
             direction LR
-            RUN[Run Record / State Machine<br/>Idempotency / Session Admission]
-            SCHED[Scheduler / Capacity<br/>Reservation / Dispatch]
-            OWNER[Host Registry / Heartbeat<br/>Lease / Fence / RunTicket]
-            EVENTS[Event Ingestor / Run Recorder<br/>Recovery / Terminal Convergence / Usage]
-            STORE[(Runtime Store<br/>Run / Host / Lease / Event / Usage)]
+            RUN[Run State Machine<br/>Idempotency]
+            QUEUE[Scheduler<br/>Queue · Capacity Reservation]
+            OWNER[Execution Ownership<br/>Host · Lease · Fence · RunTicket]
+            EVENT[Event and Recovery<br/>Cursor · Terminal · Raw Usage]
+            STORE[(Runtime Store<br/>Run · Lease · Event · Usage)]
         end
 
-        subgraph Host[Runtime Host / Go Adapter]
+        subgraph HOST[Runtime Host / Go Adapter]
             direction LR
-            ADMISSION[mTLS Host Identity<br/>Capability Handshake / Admission]
-            MATERIAL[Workspace Materializer<br/>Mount Policy / Search Proxy]
-            POLICY[Signed Tool Policy<br/>Tool Audit / Budget / Abort]
-            GATEWAY[Gateway Client]
+            ADMISSION[Host Admission<br/>Identity · Capabilities]
+            MATERIALIZE[Workspace Materializer<br/>Read-only Inputs]
+            POLICY[Tool Enforcement<br/>Allow-list · Budget · Audit]
+            DRIVER[Harness Driver]
         end
 
-        ENTRY --> API
-        API --> CATALOG --> PLAN --> WORKSPACE --> RUN
-        RUN --> SCHED --> OWNER --> ADMISSION
-        RUN --> EVENTS
-        RUN --> STORE
+        ENTRY --> API --> ROUTER --> PLANNER --> COMPOSER --> RUN
+        RUN --> QUEUE --> OWNER --> ADMISSION
+        RUN --> EVENT --> STORE
         OWNER --> STORE
-        EVENTS --> STORE
-        ADMISSION --> MATERIAL --> POLICY --> GATEWAY
+        ADMISSION --> MATERIALIZE --> POLICY --> DRIVER
     end
 
-    subgraph Harness[Agent Harness]
+    subgraph HARNESS[可替换的 Agent Harness]
         direction LR
-        DRIVER[OpenClaw Driver]
-        OVERLAY[Enterprise Overlay<br/>Run Registry / Private Context<br/>Capability / Recovery]
-        CORE[OpenClaw Agent Core<br/>Model / Session / Tool Loop]
-        CODEX[Codex 或其他 Harness Driver]
-
-        DRIVER --> OVERLAY --> CORE
-        DRIVER -. 可替换 .-> CODEX
+        OVERLAY[Enterprise Overlay<br/>Private Run Context · Recovery]
+        OPENCLAW[OpenClaw Agent Core<br/>Model · Session · Tool Loop]
+        OTHER[Codex / Other Harness]
+        OVERLAY --> OPENCLAW
+        OVERLAY -. 更换 Driver .-> OTHER
     end
 
-    GATEWAY --> DRIVER
-    CORE -->|events / result / raw usage| EVENTS
+    DRIVER --> OVERLAY
+    OPENCLAW -->|ordered events · result · raw usage| EVENT
 ```
 
-上面的四个产品是四种独立用法。实际部署客服 SaaS 时，客服 Backend 连接自己的 Yuex Runtime；部署内容创作服务时，内容 Backend 连接另一套 Yuex Runtime。下半部分只是把每套部署都相同的内部结构展开一次。
+每个产品部署自己的 Backend 和数据库，也可以部署自己的 Yuex 实例。Yuex 的 Runtime Store 不是产品数据库：它保存 Run、队列、Lease、Fence、事件和原始 Usage，以便并发调度与故障恢复；产品中的团队、会员、会话、作品、价格和积分仍由 Backend 保存。
 
-Runtime Store 也属于各自的 Yuex 部署，用来保存 Run、Host、Lease、Event 和 Usage。产品账号、会员、素材和正式资产仍在各自 Backend 中。
+| 产品 Backend 负责 | Yuex 负责 | Harness 负责 |
+| --- | --- | --- |
+| 登录、租户与用户、数据权限、Thread 和 Message、正式资产、价格、会员、积分与账单 | Run 状态机、并发容量、调度、Host 所有权、Lease/Fence、事件、恢复、原始 Usage | 模型调用、Harness Session、Tool 循环、上下文窗口与压缩 |
 
-| 组件 | 保存和处理的内容 |
-| --- | --- |
-| 产品 Backend | 团队、用户、会员、价格、业务权限、产品中的对话、用户资料和最终作品 |
-| Yuex Control Plane | 每次 Run 的状态、等待队列、执行机器归属、进度事件、故障恢复记录和原始用量 |
-| OpenClaw、Codex 等 Harness | 模型消息、原生 Session、Tool 结果、上下文压缩记录和当前 Agent Loop |
+## Example
 
-Yuex 不保存会员和产品资产，但它不是无状态转发器。Run 状态和执行归属必须持久化，否则服务重启或执行机器失联后无法安全恢复。
+下面用内容创作产品走完一次真实调用。这里的路由和名称只是示例，不是 Yuex 强制的产品 API。
 
-## Example: Content Creation
+### 1. Frontend sends a message
 
-本例中的用户 Alice 属于 Acme 团队。Backend 从登录态得到：
-
-- `tenantId`：团队 ID，例如 `tenant_acme`。Backend 用它把 Acme 的用户和资料与其他团队分开。
-- `userId`：用户 ID，例如 `user_alice`。Backend 用它检查 Alice 能读取哪些资料、能使用哪些功能。
-- `workspaceId`：一组准备给 Agent 使用的资料 ID，例如 `workspace_acme_brand`。本例中包括品牌语气、产品笔记和图片；它不是服务器上的文件夹路径。
-- `threadId`：产品页面中的一条对话或任务线，例如 `thread_launch_copy`。用户在同一条对话中继续提问时，`threadId` 保持不变。
-
-### 1. Frontend Request
-
-Alice 提交请求。`tenantId` 和 `userId` 来自服务端登录态，不由 Frontend 填写。
+Alice 在品牌 Workspace 的对话里发送一条消息：
 
 ```http
-POST /api/agent-runs
+POST /api/v1/agent/runs
 Content-Type: application/json
+Authorization: Bearer <product-session>
+Idempotency-Key: create-post-20260903-001
 ```
 
 ```json
@@ -119,446 +102,373 @@ Content-Type: application/json
   "workspaceId": "workspace_acme_brand",
   "threadId": "thread_launch_copy",
   "input": {
-    "text": "把昨天上传的产品笔记改成一篇小红书文章，保持品牌语气"
+    "type": "text",
+    "text": "把昨天上传的产品笔记改成一篇小红书文章，保持品牌语气。"
   },
   "attachments": [
-    {"resourceId": "resource_note_cover", "usage": "primary_input"}
+    {"resourceId": "resource_cover", "usage": "primary_input"}
   ]
 }
 ```
 
-这里的路由只是产品 API 示例，不是 Yuex 强制规定的路由。
+`workspaceId` 是一组长期资料的业务编号，本例中代表 Acme 团队的品牌语气、产品笔记和已授权素材；它不是服务器路径。`threadId` 是产品里的一条对话，同一条对话继续提问时保持不变。`tenantId`（团队编号）和 `userId`（Alice 的用户编号）必须由 Backend 从登录态取得，不能相信浏览器提交的同名字段。
 
-### 2. Backend Preparation
+### 2. Backend creates one Run
 
-Backend 按以下顺序准备 Run：
+Backend 依次完成这些工作：
 
-1. 检查 Alice 是否属于 Acme、是否能读取这份产品笔记，以及当前会员是否允许发起任务。这些是产品规则，Yuex 不重新判断。
-2. 创建 `runId`（本次执行的唯一编号），例如 `run_20260902_001`。Frontend 用它查询进度和取消任务；Backend 与 Yuex 用它关联事件、结果和用量，并保证重复提交不会多执行一次。
-3. 生成 `TaskIntent`（Backend 对用户请求的结构化分类）。本例使用 `content_creation`，表示“内容创作”这一类任务；这个名字由产品定义，用于筛选合适的 Agent 和 Skill，不是用户输入，也不是 Yuex 固定枚举。
-4. 读取当前 Catalog（已经发布、当前可用的 Agent、Skill、知识、Tool 和模型配置清单）。本例选择 `content_writer` Agent Profile（内容写作 Agent 的配置包）和 `note_to_post` Skill（把笔记改写成社交媒体文章的操作说明）。
-5. 选择本次需要的品牌写作知识、允许使用的 Tool、模型和输出格式，并写入 `AgentRunPlan`（本次 Run 最终采用的配置记录）。重试和恢复继续使用这份记录，不会临时换 Agent 或 Skill。
-6. Workspace Adapter 读取 Backend 中已经授权的资料，生成 `RuntimeInputManifest`（本次 Run 可以读取的文件清单）。它把品牌语气映射为 `profile/brand-voice.md`，把产品笔记映射为 `materials/note-42.md`，把图片映射为 `input/attachments/01.png`。
-7. 记录 `workspaceVersion`（这批资料的版本号）。用户在执行期间修改资料时，当前 Run 仍使用原版本，新内容从下一次 Run 开始生效。
-8. 将 `threadId` 映射到 Harness Session Key（OpenClaw 或 Codex 内部使用的会话 ID）。这个映射只保存在服务端，Frontend 不会看到。`contextGeneration` 表示当前使用第几代会话上下文；切换 Workspace 或重建 Session 时递增。
+1. 确认 Alice 属于 Acme，能够使用这个 Workspace、Thread 和附件，也有当前会员等级所需的功能与余额。
+2. 先保存 Alice 的 Message，再创建一个 `runId`，例如 `run_20260903_001`。`runId` 是这一次执行的唯一编号；查询进度、断线续传事件、取消、结果回写和 Usage 都用它关联。相同 `Idempotency-Key` 重试只能得到同一个 Run。
+3. 冻结当前 `workspaceVersion`。如果 Alice 在运行中又改了品牌资料，本次 Run 仍读旧版本，新资料从下一次 Run 生效。
+4. 根据当前输入和已发布 Catalog 选择 Agent Profile 与 Skills，形成不可变的 `AgentRunPlan`。重试时继续用同一份 Plan，不能临时换 Agent、Tool 或模型。
+5. 把获准读取的 Agent 文件、Skill、知识、品牌资料、用户输入和附件列入 `RuntimeInputManifest`。Manifest 是文件白名单，不包含数据库连接串、Provider Key 或真实存储路径。
+6. 把产品 `threadId` 映射为服务端持有的 Harness Session Key。`contextGeneration` 表示这条对话当前使用第几代上下文；切换 Workspace 或重建 Session 时递增。浏览器和模型都看不到 Session Key。
+7. 在提交 Runtime 前预留额度，避免多个并发请求同时花掉同一份余额。
 
-Backend Adapter 随后提交以下数据。示例省略了签名和过期时间等传输字段。
+Backend 交给 Yuex 的核心数据大致如下：
 
 ```json
 {
-  "runId": "run_20260902_001",
+  "runId": "run_20260903_001",
+  "owner": {
+    "tenantId": "tenant_acme",
+    "userId": "user_alice",
+    "workspaceId": "workspace_acme_brand",
+    "workspaceVersion": 17
+  },
+  "session": {
+    "threadId": "thread_launch_copy",
+    "harnessSessionKey": "server-owned-encrypted-reference",
+    "contextGeneration": 3
+  },
   "taskIntent": {
     "category": "content_creation",
     "expectedOutput": "article"
   },
-  "inputMessage": "把昨天上传的产品笔记改成一篇小红书文章，保持品牌语气",
-  "inputManifest": {
-    "tenantId": "tenant_acme",
-    "userId": "user_alice",
-    "workspaceId": "workspace_acme_brand",
-    "workspaceVersion": 17,
-    "contextGeneration": 3,
-    "files": [
-      {
-        "logicalPath": "profile/brand-voice.md",
-        "sourceType": "formal_workspace_ref",
-        "sourceRef": "brand-profile-v17"
-      },
-      {
-        "logicalPath": "materials/note-42.md",
-        "sourceType": "formal_workspace_ref",
-        "sourceRef": "note-42-v5"
-      }
-    ]
-  },
   "plan": {
-    "l1AgentProfile": "content_writer",
-    "selectedSkillProfiles": ["note_to_post"],
-    "selectedKnowledgeRefs": ["knowledge/content-writing/INDEX.md"],
-    "requiredTools": ["read", "workspace_search"],
-    "runtimeConfigId": "content-default",
-    "outputContract": {"format": "markdown"}
+    "agentProfile": "content_writer",
+    "skills": ["note_to_post"],
+    "knowledge": ["knowledge/content-writing/INDEX.md"],
+    "tools": ["read", "workspace_search"],
+    "runtimeConfig": "content-default",
+    "outputContract": "article.v1"
   },
-  "productSessionRef": {
-    "threadId": "thread_launch_copy",
-    "harnessSessionKey": "server-owned-session-key"
+  "inputManifest": {
+    "files": [
+      {"logicalPath": "profile/brand-voice.md", "sourceType": "formal_workspace_ref", "sourceRef": "brand-profile-v17"},
+      {"logicalPath": "materials/note-42.md", "sourceType": "formal_workspace_ref", "sourceRef": "note-42-v5"},
+      {"logicalPath": "input/attachments/01.png", "sourceType": "object_ref", "sourceRef": "resource_cover"},
+      {"logicalPath": "input/user_request.md", "sourceType": "inline", "content": "把昨天上传的产品笔记改成一篇小红书文章，保持品牌语气。"}
+    ]
   }
 }
 ```
 
-数据库连接串、业务表名、Provider 明文密钥和服务器真实路径不会放进请求。Agent 只会拿到 Manifest 中列出的资料。
+Backend 不需要把数据库交给 Agent。它只需从数据库和对象存储中取出已经鉴权的内容，再以 Manifest 引用或短期只读引用交给 Runtime。
 
-Runtime 接受任务后，Backend 把 `runId` 和当前状态返回给 Frontend：
+### 3. Yuex executes it
+
+Yuex 先确认有能力执行这份 Plan 的 Runtime Host，再等待并发容量。分配成功后，它为本次 Run 建立短期 Lease 和递增的 Fence。Lease 表示“现在由哪台 Host 执行”；Fence 是所有权代数，任务被重新分配后，旧 Host 即使迟到也不能用旧 Fence 写入事件或结果。
+
+Runtime Host 校验只对这次 Run 有效的 RunTicket，按 Manifest 创建临时 Workspace，随后 Driver 把 Workspace、用户输入和 Session 交给 OpenClaw。OpenClaw 运行模型与 Tool 循环，Yuex 按顺序保存事件。Host 失联时，Recovery 根据持久化的 Run、Lease、Fence 和事件游标判断接管、重试或终止，而不是仅靠进程内存猜测。
+
+### 4. Backend returns the result
+
+Runtime 最终返回结果和原始 Usage，例如输入/输出 Token、Tool 次数与执行时间。Backend 校验输出合同后，把 Assistant Message 和正式作品写回自己的数据库，再用产品自己的价格、会员和积分规则结算。Runtime 提供计量事实，不决定售价。
+
+Frontend 只调用 Backend：
 
 ```http
-HTTP/1.1 202 Accepted
-Content-Type: application/json
+GET  /api/v1/agent/runs/run_20260903_001
+GET  /api/v1/agent/runs/run_20260903_001/events?cursor=42
+POST /api/v1/agent/runs/run_20260903_001/cancel
 ```
+
+`cursor` 是客户端已经收到的最后一条事件位置。断线重连时带上它，Backend 只返回后续事件。取消接口先持久化取消意图，再由 Worker 带当前 Fence 调用 Runtime abort，不能从浏览器直接杀 Host 进程。
+
+完整链路是：
+
+```text
+Frontend message
+  -> Backend auth + Message + idempotent Run + credit reservation
+  -> Agent Profile / Skill selection + frozen Plan + input Manifest
+  -> Yuex queue + capacity + Host Lease/Fence
+  -> temporary Run Workspace
+  -> OpenClaw model/session/tool loop
+  -> ordered Runtime events + terminal result + raw Usage
+  -> Backend assistant Message + product asset + billing settlement
+  -> Frontend status/events/result
+```
+
+可直接阅读 [`examples/backend/`](examples/backend/) 中的精简 Backend Example。它展示上述调用顺序，但故意不是可编译的完整服务。
+
+## Agent Profile
+
+Agent Profile 不是一个正在运行的进程，而是一份已发布的 Agent 配置。Catalog 用它判断“什么任务可以选这个 Agent”；文件包则告诉 Harness“选中后具体按什么规则工作”。
+
+下面的 `content_writer` 仅用于解释结构，**不是声明本仓库已经内置或发布了这个 Profile**。
+
+```mermaid
+flowchart LR
+    subgraph RECORD[Catalog record: used before a Run]
+        ID[content_writer<br/>version · status · priority]
+        ROUTE[intent categories<br/>task types · required features]
+        INPUT[input policy<br/>text/image/size limits]
+        CHOICES[candidate skills<br/>knowledge roots]
+        GUARDS[tool policy<br/>execution scope · membership]
+    end
+
+    subgraph PACKAGE[Released file package: loaded after selection]
+        PERSONA[AGENTS.md · SOUL.md<br/>MEMORY.md · TOOLS.md]
+        SKILLS[skills/<br/>SKILL.md · references/]
+        KNOWLEDGE[knowledge/<br/>Agent-specific knowledge]
+        PROTOCOLS[protocols/<br/>output and writeback rules]
+        CATALOG[capability-catalog.json]
+    end
+
+    RECORD -->|router selects one profile| PLAN[AgentRunPlan<br/>profile + skills + knowledge<br/>tools + runtime config + output contract]
+    PACKAGE -->|files are frozen by version/hash| PLAN
+    PLAN --> MANIFEST[RuntimeInputManifest]
+```
+
+一个精简的 Catalog 记录可以长这样：
 
 ```json
 {
-  "runId": "run_20260902_001",
-  "status": "queued"
+  "agentProfile": "content_writer",
+  "displayName": "Content Writer",
+  "status": "active",
+  "version": "1.4.0",
+  "publicSelectable": true,
+  "intentCategories": ["content_creation", "rewrite"],
+  "taskTypes": ["article", "social_post"],
+  "candidateSkillProfiles": ["note_to_post", "long_form_article"],
+  "knowledgeRoots": ["knowledge/content-writing"],
+  "toolPolicyProfile": "content-readonly",
+  "requiredFeatures": ["workspace_search"],
+  "executionScopes": ["product_thread"],
+  "inputPolicy": {
+    "acceptsText": true,
+    "acceptedImageMIMETypes": ["image/png", "image/jpeg"],
+    "maxFiles": 8,
+    "maxBytes": 20971520
+  }
 }
 ```
 
-### 3. Runtime Execution
-
-Yuex 收到请求后完成以下处理：
-
-1. Control Plane 检查 Runtime Host 的 `capabilities`（Host 报告的版本、可用 Tool、模型窗口和取消能力），确认它能执行这份 Plan。
-2. 没有空闲容量时，Run 进入队列。有空位后创建 Reservation（短时间预留一个执行位置），避免多个请求同时占用同一个空位。
-3. 分配 Runtime Host，并创建 Lease（记录当前由哪台 Host 执行以及这份所有权何时过期）和 Fence（每次重新分配都会增加的所有权编号）。旧 Host 即使延迟返回，也不能用旧 Fence 写入结果。
-4. 生成 RunTicket（只对本次 Run 有效的短期授权），把 Run、团队、Workspace、Host、Plan、Manifest 和 Fence 绑定在一起。
-5. Runtime Host 按 Manifest 创建 Run Workspace（本次 Run 专用的临时目录），只放入已经授权的 Agent 文件、Skill、知识、用户资料和附件。
-6. OpenClaw Driver 将输入、Session 和 Run Workspace 交给 OpenClaw Agent Core。OpenClaw 执行模型和 Tool 循环，长对话超出模型窗口时按压缩规则继续。
-7. Yuex 持续保存有顺序的事件，例如排队、开始执行、Tool 调用、草稿、完成或失败。Host 失联时，Recovery 根据保存的 Run、Lease 和事件记录接管任务。
-
-### 4. Result
-
-OpenClaw 返回最终文章和原始 Usage（模型 Token、Tool 调用和执行时间）。Yuex 保存唯一终态，Backend 校验输出后将文章写入自己的作品表，再按产品价格计算积分或账单。Yuex 不决定售价。
-
-Frontend 只通过 Backend 使用 `runId` 查询、接收事件或取消：
-
-```http
-GET    /api/agent-runs/{runId}
-GET    /api/agent-runs/{runId}/events?cursor={cursor}
-DELETE /api/agent-runs/{runId}
-```
-
-完整链路如下：
+对应的发布包通常是：
 
 ```text
-Frontend 提交产品请求
-  → Backend 鉴权、选择 Agent、准备资料
-  → Yuex 排队、分配 Host、建立执行所有权
-  → Runtime Host 创建临时 Workspace
-  → OpenClaw 执行模型和 Tool
-  → Yuex 保存事件、结果和原始 Usage
-  → Backend 写入产品数据并计费
-  → Frontend 展示结果
+agent-source/content_writer/
+├── AGENTS.md                    # 长期工作规则和边界
+├── SOUL.md                      # 语气、立场和默认表达方式
+├── MEMORY.md                    # 允许进入常驻上下文的记忆规则
+├── TOOLS.md                     # Tool 使用说明
+├── capability-catalog.json      # Profile 能力与可选 Skill 声明
+├── skills/
+│   ├── note_to_post/
+│   │   ├── SKILL.md             # 笔记改写的步骤和检查项
+│   │   └── references/          # 仅该 Skill 使用的参考资料
+│   └── long_form_article/
+│       └── SKILL.md
+├── knowledge/
+│   └── content-writing/         # 该 Agent 可引用的通用写作知识
+└── protocols/
+    └── article-output.md        # article.v1 输出与写回合同
 ```
 
-Frontend 不直接连接 Yuex、Runtime Host 或 OpenClaw，也不持有 Harness Session Key、RunTicket、Lease、Fence、Provider Key 或真实文件路径。
+发布时为 Catalog 记录和文件包生成不可变版本。一次 Run 只从当前生效 Catalog 中选一个 Agent Profile，再从它允许的候选集合中选本次需要的 Skill；没有被选中的 Skill 不进入 Run Workspace。Agent 专属知识放在该 Agent 包的 `knowledge/`，Skill 独享资料放在 `skills/<skill>/references/`，多个 Agent 共用的知识应作为单独的版本化知识包发布。Tool 先在 Host 实现，再登记能力，最后加入 Tool Policy allow-list；只写进提示词并不会让 Tool 变得可用。
 
 ## Workspace
 
-Workspace 不是 Yuex 中长期维护的一份固定目录。长期资料仍在产品数据库、对象存储或已发布的 Agent 制品中。每次 Run 开始前，Backend 列出本次允许读取的资料，Runtime Host 再把这些资料组合成临时目录。
+这里有两个不同的 Workspace，不能混为一个目录。
+
+**Formal Workspace** 是 Backend 长期保存的用户/团队工作区。它包含用户资产和对 Agent 文件的合法定制，是事实源。**Run Workspace** 是 Runtime Host 为一次 Run 临时生成的执行目录，只包含本次获准读取的快照，任务结束后可清理。Harness 的 Session Store、Runtime 日志和数据库都不在这两个目录里。
+
+OpenClaw 对 Workspace 的基础说明见 [Agent Workspace](https://docs.openclaw.ai/concepts/agent-workspace)。Codex 对目录中的分层指令文件如何生效有相近说明，见 [AGENTS.md](https://developers.openai.com/codex/guides/agents-md/)。Yuex 在这些文件约定之外增加了版本冻结、Manifest 白名单和单次 Run 隔离。
+
+### Formal Workspace: L0-L5
+
+L0-L5 是六类内容职责，不要求每层恰好对应一个名为 `L0` 的目录。不同产品可以增加 `book/`、`projects/` 或 `work/`，但每个文件仍应有明确归属。
+
+| 层 | 放什么 | 常见路径 | 谁能改 |
+| --- | --- | --- | --- |
+| L0 协议边界 | Agent 的安全规则、身份、用户说明、Tool 边界和协议 | `AGENTS.md`, `SOUL.md`, `USER.md`, `TOOLS.md`, `MEMORY.md`, `protocols/` | 平台发布默认值；用户只在允许区域定制 |
+| L1 原始材料 | 用户上传或沉淀的事实材料，不把推断当事实 | `materials/`, `uploads/`, `assets/`, `notes/` | 用户或 Backend 的资产服务 |
+| L2 Profile 事实 | 人、团队、品牌、产品的可核验事实与事件 | `profile/facts/`, `profile/events/`, `profile/products/` | 用户或经过校验的写回流程 |
+| L3 偏好与定位 | 语气、偏好、禁区、受众和定位结论 | `profile/preference-boundaries.md`, `profile/user-positioning/` | 用户为主，Agent 可提交待确认建议 |
+| L4 创作现场 | 正在进行的文章、项目、工作稿和日常产出 | `内容.md`, `daily-assets/`, `book/`, `projects/`, `work/` | 用户以及获得写回授权的 Backend 流程 |
+| L5 派生导航 | 指向 L1-L4 的短索引，帮助 Agent 找文件 | `resources/overview.md`, `resources/materials.md`, `resources/profile.md` | Index/Projector 自动生成 |
+
+例如，一个内容产品的 Formal Workspace 可以是：
 
 ```text
-已发布的 Agent / Skill 文件 ─┐
-Backend 中的品牌资料和笔记 ─┼→ RuntimeInputManifest → Run Workspace → OpenClaw
-对象存储中的图片和附件 ────┤
-本次用户输入 ───────────────┘
+workspace_acme_brand/
+├── AGENTS.md                         # L0
+├── SOUL.md                           # L0
+├── USER.md                           # L0
+├── TOOLS.md                          # L0
+├── MEMORY.md                         # L0
+├── protocols/                        # L0
+├── materials/                        # L1: 笔记、访谈、转写
+├── assets/                           # L1: 图片、文档引用
+├── profile/
+│   ├── facts/                        # L2: 品牌与产品事实
+│   ├── events/                       # L2: 已发生事件
+│   ├── preference-boundaries.md      # L3: 表达偏好与禁区
+│   └── user-positioning/             # L3: 受众和定位
+├── 内容.md                           # L4: 当前内容入口
+├── daily-assets/                     # L4: 日常创作
+├── projects/                         # L4: 项目稿件
+├── skills/                           # 用户启用或定制的 Skill 文件
+└── resources/                        # L5: 自动生成的扁平导航
+    ├── overview.md
+    ├── materials.md
+    ├── profile.md
+    └── creative.md
 ```
 
-Manifest 支持四种来源：
+L5 不是第二份资料库。它只列出路径并指向真正的源文件，`resources/**` 自身不会再次进入索引成为“新事实”。修改 L1-L4 后由 Index/Projector 重建 L5；直接改导航文件不能冒充修改原资料。
 
-| `sourceType` | 实际内容 | 示例 |
-| --- | --- | --- |
-| `meta_release_ref` | 平台已经发布并带版本号的 Agent、Skill 或公共知识文件 | `AGENTS.md`、`skills/note_to_post/SKILL.md` |
-| `formal_workspace_ref` | Backend 长期保存的团队或用户资料 | `profile/brand-voice.md`、`materials/note-42.md` |
-| `object_ref` | 对象存储中的图片、文档等大文件，通过短期只读授权获取 | `input/attachments/01.png` |
-| `inline` | 直接随本次请求发送的小段文本 | `input/user_request.md`、`input/context.md` |
+### How the files are combined
 
-本例最终创建的临时目录类似：
+正式 Workspace 的默认 Agent 文件可以从平台版本升级，但升级不是简单覆盖用户文件：平台安全边界和输出协议以新版本为准；用户在允许区域写入的偏好和说明要保留；双方改到同一受保护区域时应进入人工处理，而不是静默选择一方。
+
+创建 Run 时，Composer 再按以下顺序编译本次文件：
 
 ```text
-run-workspace/
-├── AGENTS.md                         # Agent 的工作规则
-├── SOUL.md                           # 表达方式
-├── TOOLS.md                          # Tool 使用说明
+1. selected Agent release files
+2. selected Skill release files
+3. authorized Formal Workspace overrides for those same Agent/Skill paths
+4. allowed Workspace protocols and only the Skills frozen in the Plan
+5. selected versioned knowledge
+6. inline request/context/plan
+7. authorized materials and attachments
+```
+
+Formal Workspace 只能覆盖已经授权的 Agent/Skill 逻辑路径，不能借同名文件注入未选中的 Skill。额外协议必须在 `protocols/` 下；Workspace 中未被 Plan 选中的其他 Skill 会被排除。合法覆盖完成后，整个 Manifest 中仍不允许两个文件占用同一个逻辑路径；发生重复、越界路径或保留目录冲突时，Run 直接拒绝，不使用含糊的“最后一个覆盖前一个”。
+
+这就是这里所说的“合并”：不是把 L0-L5 六棵目录无条件复制到模型上下文，而是先确定 Agent 与 Skill，再从长期 Workspace 中裁剪本次需要且有权读取的文件，最终得到一份确定的 Manifest。
+
+### How a Run Workspace is created
+
+Manifest 中的文件来源有四种：
+
+| `sourceType` | 含义 |
+| --- | --- |
+| `meta_release_ref` | 已发布并带版本的 Agent、Skill 或公共知识文件 |
+| `formal_workspace_ref` | Formal Workspace 中冻结版本的用户/团队文件 |
+| `object_ref` | 对象存储中的图片或大文件，通过短期只读引用获取 |
+| `inline` | 本次请求直接携带的小段文本，例如用户输入和 Plan 摘要 |
+
+Host 先校验 RunTicket、Host、Run、Workspace 版本、上下文代数、能力和 Manifest。随后在临时 sibling 目录解析每个条目并校验声明的大小与内容摘要，创建 `input/`、`output/`、`staging/` 和 `.materialization.json`，最后原子重命名为：
+
+```text
+<tmpRoot>/runtime-workspaces/<runId>/
+```
+
+本例最终可能得到：
+
+```text
+<tmpRoot>/runtime-workspaces/run_20260903_001/
+├── AGENTS.md
+├── SOUL.md
+├── TOOLS.md
 ├── skills/
 │   └── note_to_post/
-│       ├── SKILL.md                  # 笔记改写方法
-│       └── references/               # 该 Skill 的参考资料
+│       ├── SKILL.md
+│       └── references/
 ├── knowledge/
-│   └── content-writing/INDEX.md      # 本次选择的公共知识入口
-├── profile/brand-voice.md            # Acme 的品牌语气
-├── materials/note-42.md              # Alice 的产品笔记
+│   └── content-writing/INDEX.md
+├── profile/brand-voice.md
+├── materials/note-42.md
 ├── input/
 │   ├── user_request.md
 │   └── attachments/01.png
-├── staging/                           # 允许临时写入时使用
-└── output/                            # 本次输出
+├── staging/                           # 本次执行的临时中间文件
+├── output/                            # 结构化结果和制品
+└── .materialization.json              # Run 与 Manifest 标记
 ```
 
-`workspaceVersion` 固定的是本次使用的资料版本和文件清单，不是永久锁住一个目录。Run 执行期间新增或修改的资料只进入后续 Run。
+`output/`、`staging/` 和 `.materialization.json` 由 Materializer 保留，Manifest 不能预先提供这些路径。现有实现还对文件数量、总大小和 inline 文件大小设有上限。完全一致且未过期的物化结果可以复用；清理时先改名到隔离路径，再删除，避免并发读写同一目录。
 
-Agent 如需修改产品中的正式资料，应返回结构化结果或 `assetWriteIntent`。Backend 重新检查权限和格式后写入数据库；Run Workspace 的临时 `write` 权限不能直接修改正式资产。
+Run Workspace 不保存 Harness Session。Session 由 OpenClaw 或其他 Harness 的 Session Store 管理，通过 Backend 持有的 Session Key 与 `contextGeneration` 连接到本次 Run。因此，删除临时 Workspace 不等于删除整条对话，切换对话上下文也不等于改写用户正式资产。
 
-## Backend Integration
+## Runtime behavior
 
-### Data Required for a Run
+### Run state and concurrency
 
-| Backend 准备的数据 | 用途 |
-| --- | --- |
-| 团队、用户和 Workspace ID | 确认本次任务属于谁，可以读取哪一组资料 |
-| `runId` 和用户输入 | 标记本次执行，支持查询、取消、重试去重和结果关联 |
-| `TaskIntent` | 用产品自己的任务分类选择合适的 Agent 和 Skill |
-| `AgentRunPlan` | 固定本次 Agent、Skill、知识、Tool、模型和输出格式 |
-| `RuntimeInputManifest` | 列出本次允许 Runtime 获取的文件及其版本 |
-| `threadId`、Harness Session Key 和 `contextGeneration` | 将产品对话连接到 Harness 会话，并控制何时重建上下文 |
-| 结果写回位置 | 告诉 Backend 最终结果应进入哪个 Thread、Task 或正式资产 |
-| Usage 业务关联 | 将 Runtime 原始用量交给正确的产品账号结算 |
+对外可以把状态理解为：
 
-### Identifier Reference
+```mermaid
+stateDiagram-v2
+    [*] --> planning
+    planning --> queued
+    queued --> reserving
+    reserving --> dispatched
+    dispatched --> accepted
+    accepted --> materializing
+    materializing --> running
+    running --> finalizing
+    finalizing --> succeeded
+    planning --> failed
+    queued --> cancelled
+    running --> aborting
+    aborting --> cancelled
+    running --> failed
+    running --> timeout
+    running --> orphaned: Host ownership lost
+    orphaned --> queued: recovery permits retry
+```
 
-| 字段 | 用途 | 示例 |
-| --- | --- | --- |
-| `tenantId` | 团队或公司 ID。Backend 用它隔开不同客户的数据，防止一个团队读到另一个团队的资料 | `tenant_acme` |
-| `userId` | 当前用户 ID。Backend 用它检查成员身份、操作权限并记录是谁发起任务 | `user_alice` |
-| `workspaceId` | 一组可供 Agent 使用的资料 ID，例如某个团队的品牌资料和项目文件 | `workspace_acme_brand` |
-| `threadId` | 产品页面中的一条对话或任务线 ID | `thread_launch_copy` |
-| `runId` | 一次执行的 ID，用于查进度、取消、重试去重以及关联事件、结果和用量 | `run_20260902_001` |
-| Harness Session Key | `threadId` 在 OpenClaw 或 Codex 内部对应的会话 ID，只在服务端保存 | `openclaw:session:...` |
-| `workspaceVersion` | 本次 Run 使用的资料版本；运行中的资料不会跟随用户修改而变化 | `17` |
-| `contextGeneration` | 当前使用第几代会话上下文；换 Workspace 或重建 Session 时加一 | `3` |
-| Catalog Revision | 本次 Run 使用的 Catalog 版本号，保证恢复时仍能找到相同配置 | `catalog_2026_09_02` |
+实际内部状态还会随恢复和兼容路径扩展，但有三条规则不变：终态只能收敛一次；同一 Run 的事件按 Sequence 去重和排序；任何执行端写入都必须携带当前所有权 Fence。容量 Reservation 防止并发超卖，Session Admission 防止同一产品会话在不允许时被两个 Run 同时改写。
 
-单用户产品没有团队概念时，可以为整个产品使用一个固定 `tenantId`。`workspaceId` 是产品中的资料集合 ID，不要求对应本地目录。
+### Sessions and compression
 
-`reservationId`、`fencingToken`、`capabilityHash` 和 `RunTicket` 由 Runtime 生成。Frontend 不填写，Backend 业务代码也不应手工拼接。
+Yuex 只管理产品 Thread 到 Harness Session 的安全绑定和并发准入，不自己重新实现 OpenClaw 的消息历史。长对话接近模型上下文窗口时，由 Harness 按其 Session/compaction 机制压缩旧消息并保留继续推理所需的摘要或锚点；Runtime 记录相关事件和代数，避免恢复时接错 Session。压缩的是模型上下文，不是删除 Backend 的原始 Message，也不是改写 Formal Workspace 的 L1-L4 资产。
 
-### Runtime API
+更换 Codex 或其他 Harness 时，新 Driver 必须明确提供等价的 Session 标识、上下文窗口/压缩行为、事件游标、取消和终态结果；否则不能只替换一条模型调用就宣称行为一致。
 
-| 操作 | 调用方 | 用途 |
-| --- | --- | --- |
-| `capabilities` | Control Plane / Adapter | 查询 Host 版本、可用 Tool、模型窗口、预算和取消能力 |
-| `submit` | Backend / Dispatcher | 提交 Run；相同 `runId` 重复提交也只执行一次 |
-| `status` | Backend / Recovery | 查询当前状态、最新事件序号、结果、错误和 Usage |
-| `events` | Backend / Event Worker | 从指定 cursor 继续读取进度、Tool、草稿和终态事件 |
-| `abort` | Backend | 取消 Run，并等待 Runtime 返回最终取消状态 |
+### Tools
 
-Frontend 只调用产品 Backend。Backend 再调用以上 Runtime API，并把内部状态转换为产品自己的查询结果或 SSE 数据。
+Tool 能力有三道门：Host 在 capabilities 中声明实际实现；Plan 选择本次需要的 Tool；签名 Tool Policy 再限制可调用范围、预算和审计字段。模型文字不能扩大权限。像 `workspace_search` 这样的检索 Tool 只返回获准的相对路径，Harness 再用受控 `read` 读取内容，不能把租户路径、数据库或全盘扫描能力暴露给模型。
 
-### Backend Adapters
+### Recovery and usage
 
-| Adapter | 工作内容 |
-| --- | --- |
-| Identity | 从登录态得到团队、用户和 Workspace，检查产品权限 |
-| Intent | 将页面操作或自由输入转换成 `TaskIntent` |
-| Workspace | 将数据库记录、长期资料和附件转换成带版本的 Manifest |
-| Session | 保存 `threadId` 与 Harness Session Key 的映射，维护 `contextGeneration` |
-| Catalog / Entitlement | 返回产品允许用户看到的 Agent、Skill 和模型列表 |
-| Runtime Client | 调用 `capabilities`、`submit`、`status`、`events` 和 `abort` |
-| Event Projection | 将 Runtime 事件转换成产品查询接口或 SSE 数据 |
-| Result Sink | 校验输出格式，把最终结果写回产品数据 |
-| Usage | 接收原始 Usage，再按产品价格规则结算 |
+Control Plane 持久化 Host 心跳、Lease、Fence、Dispatch、事件游标和终态收敛记录。Worker 重启后从最后提交的游标继续拉事件；Host 离线后，旧 Fence 失效，恢复流程决定重新排队、标记 orphaned 或进入失败终态。Backend 对终态投影和 Usage 结算也必须使用唯一键，因此重复事件和 Worker 重跑不会生成第二条 Assistant Message 或第二笔扣费。
 
-Runtime Store 随 Yuex 部署，保存 Run、队列、Lease 和 Event。产品 Backend 不需要再建一套相同的执行状态。当前快照中仍与原 Backend 耦合的 Repository，后续应改为 Runtime 自有的存储接口和数据库迁移。
+Runtime 只保存原始 Usage。Backend 应在提交前预留配额，在终态时一次性记录 Usage 并结算；失败、取消与超时如何退款或扣除，由产品政策决定。
 
-<details>
-<summary>Codex 接入任务模板</summary>
+## Integration checklist
+
+接入一个新的 Backend，至少需要实现以下边界：
+
+- 从登录态得到 `tenantId`、`userId`，并鉴权 `workspaceId`、Thread 与每个附件。
+- 持久化 Message、Run 与幂等键；用 outbox/queue 保证提交最终发生。
+- 发布 Agent/Skill/Knowledge Catalog，并在每次 Run 冻结 Plan 与版本。
+- 把产品数据库和对象存储中的授权数据转换为 `RuntimeInputManifest`。
+- 保存 `threadId` 到 Harness Session Key 的服务端映射与 `contextGeneration`。
+- 对接 `capabilities`, `submit`, `status`, `events`, `abort`，持久化事件 cursor。
+- 校验输出合同，再写回 Message 或正式资产。
+- 预留配额，按 Runtime raw Usage 幂等结算，并处理失败/取消退款。
+- 为卡住的 Run、过期 Reservation、部分完成的结果投影配置恢复任务。
+
+不要把数据库、产品权限、售价或长期用户资产搬进 Runtime。也不要让 Frontend 直接持有 RunTicket、Lease、Fence、Harness Session Key、Provider Key 或真实 Workspace 路径。
+
+## Repository layout
 
 ```text
-把 <YOUR_BACKEND> 接入 Yuex Agent Runtime。
+extracted/
+├── go-runtime-control-plane/    # Run、Scheduler、Lease、Fence、Event、Recovery
+├── go-runtime-adapter/          # Runtime Host 与 Harness 的 Go Adapter
+└── openclaw-driver/             # OpenClaw overlay 与 tooling
 
-先读取 README.md 和 Repository Layout 中的 Runtime、Adapter、Driver 代码。找出产品中的团队、用户、Workspace、Thread、Task、Result 和 Usage 分别存在哪里。
-
-实现 Identity、Intent、Workspace、Session、Catalog、Event、Result 和 Usage Adapter。由 Backend 创建 runId 和 TaskIntent，固定 AgentRunPlan 与 RuntimeInputManifest，再接入 capabilities、submit、status、events 和 abort。Frontend 只能访问 Backend。
-
-保留 workspaceVersion、contextGeneration、Reservation、Lease、Fence、RunTicket、重复提交去重、Event cursor 和唯一终态。不得向 Agent 暴露数据库凭据、Provider Key、Host 路径或内部 Session Store。原 Backend 专属 Repository 和 callback 应改成 Runtime 接口，不得把产品业务表复制进 Runtime Core。
-
-验证重复 submit、SSE 断线续传、取消、Host 丢失恢复、旧 Fence 拒写和长上下文压缩。
+cut-boundary-reference/          # 尚未完全切断的 API、Worker、Storage 与部署参考快照
+examples/backend/                # 精简、不可运行的产品 Backend 接入示例
 ```
 
-</details>
-
-## Agent Catalog
-
-| 对象 | 内容 |
-| --- | --- |
-| Catalog | 当前已经发布并允许使用的 Agent、Skill、知识、Tool 和模型配置列表；每次发布都有版本号 |
-| Agent Profile | 一个 Agent 的配置包，说明它负责什么任务、加载哪些规则、可以选择哪些 Skill、知识和 Tool |
-| Skill | 完成一类任务的操作说明，包含输入要求、处理步骤、所需 Tool、输出格式和失败条件 |
-| Knowledge Ref | 本次 Run 要加载的具体知识文件，而不是整个知识库 |
-| Tool Policy | 本次 Run 允许和禁止使用哪些 Tool，以及能写到哪里 |
-| Runtime Config | Provider、模型、Auth Pool、超时、Thinking、输出预算和 Plugin 配置 |
-| Agent Release | 一次已经发布并带版本号的 Agent 文件与配置集合 |
-| AgentRunPlan | 从 Catalog 中为某次 Run 选出的最终配置，Run 开始后不再改变 |
-
-Agent Profile 有三种选择方式：用户从 Backend 返回的公开 Catalog 中选择；某个产品按钮固定使用指定 Profile；Backend 根据 `TaskIntent` 自动选择。无论入口是哪一种，最后都由服务端检查：
-
-```text
-TaskIntent + 用户权限 + Workspace + Catalog 版本
-    → 找出支持该任务并允许当前产品使用的 Agent Profile
-    → 从该 Profile 的候选 Skill 中选择满足任务和 Tool 条件的 Skill
-    → 选择具体知识文件、Tool Policy、Runtime Config 和输出格式
-    → 保存 AgentRunPlan
-```
-
-重试、恢复和最终结果解析继续使用同一个 Plan。Agent ID、Skill ID、知识路径和 Tool 名称只能来自 Catalog，模型不能临时创建。
-
-### Skill Registry
-
-Skill Registry 位于服务端 Runtime Meta/Catalog：
-
-- Skill 正文发布在 `runtime-skills/<skillProfile>/SKILL.md`。
-- Planning Catalog 记录 Skill ID、版本、支持的任务、允许的 Agent、需要的知识文件和 Runtime 能力。
-- `meta-manifest.json` 列出 Runtime 可以加载的正式文件。
-- Agent Profile 的 `candidateSkillProfiles` 只列候选 Skill；每次 Run 仍检查用户权限和 Host 能力。
-- 用户 Workspace 可以保存个性化配置，但正式 Skill ID 和版本必须来自服务端 Catalog。
-
-只有文件、没有进入 Registry 的 `SKILL.md` 不会被 Runtime 使用。
-
-## Packages and Releases
-
-Agent 设计源采用以下结构：
-
-```text
-agent-source/<agentProfile>/
-├── AGENTS.md                  # 长期工作规则和任务边界
-├── SOUL.md                    # 人格与表达方式
-├── MEMORY.md                  # 稳定记忆规则
-├── TOOLS.md                   # 已注册 Tool 的使用说明
-├── capability-catalog.json    # 该 Agent 需要哪些 Runtime 能力
-├── skills/                    # 任务方法
-├── knowledge/                 # Agent 专属知识
-└── protocols/                 # 输入、输出和写回格式
-```
-
-Provider 密钥和临时用户输入不进入 Agent 制品。`TOOLS.md` 只说明已注册 Tool 的用法，不实现 Tool，也不授予权限。
-
-```text
-设计源
-  → 检查文件和能力声明
-  → 生成 runtime-agents/<agentProfile>/
-  → 生成 runtime-skills/<skillProfile>/
-  → 登记 Knowledge Refs、Tool Policy 和 Runtime Config
-  → 生成 agent-routing-manifest.json 与 meta-manifest.json
-  → 生成带版本号且不可修改的 Release Bundle
-  → 发布新的 Catalog 版本
-```
-
-已经开始的 Run 始终使用原 Release；新 Catalog 只影响新 Run。
-
-| 扩展项 | 添加方式 |
-| --- | --- |
-| Agent Profile | 添加工作规则和能力声明，配置支持的任务、候选 Skill、知识目录、Tool Policy、Runtime Config 和输出格式，然后发布 Catalog |
-| Skill | 添加 `runtime-skills/<skillProfile>/SKILL.md`，声明允许的 Agent、所需 Tool、知识文件和输出格式，再加入 Profile 候选列表 |
-| Agent 专属知识 | 放在该 Agent 的 `knowledge/` 中，随 Agent Release 发布 |
-| Skill 专属资料 | 放在 `runtime-skills/<skillProfile>/references/` 中，由该 Skill 按需读取 |
-| 平台公共知识 | 放在 `knowledge/<domain>/` 中，通过小型 `INDEX.md` 或 `OVERVIEW.md` 被多个 Skill 引用 |
-| 用户私有知识 | 保留在用户 Workspace 中，通过 `workspace_search` 找到路径，再用 `read` 读取 |
-| 单次任务材料 | 通过 Manifest 放进 `input/`，Run 结束后不变成长期资料 |
-
-`knowledgeRoots` 只规定 Agent 允许引用哪些知识目录。每次 Run 只加载 Plan 中明确选择的 `selectedKnowledgeRefs`，不会把整个知识库塞进上下文。
-
-## Tools
-
-当前企业契约向 Agent 提供 `read`、`workspace_search` 和按条件授权的 `write`。`workspace_search` 只返回已经授权的文件路径和基本信息，文件内容仍通过 `read` 获取。
-
-新增 Tool 需要完成以下步骤：
-
-1. 在 Agent Core、Harness Driver 或受控 Plugin 中实现 Tool 及输入/输出 Schema。
-2. 通过 Runtime `capabilities` 报告 Tool 名称、Plugin 版本、Schema 和是否可以使用。
-3. 在 Runtime Tool Catalog 和 Tool Policy 中注册。
-4. 在 Agent `capability-catalog.json` 和需要该 Tool 的 Skill 中声明它。
-5. Control Plane 根据 AgentRunPlan 生成本次 Run 的最小 Tool 权限；明确禁止的 Tool 始终不能调用。
-6. Tool 执行时检查 Run、团队、Workspace、Lease 和 Fence，并记录开始、完成或拒绝事件。
-7. 发布新的 Runtime/Plugin 和 Agent/Skill Release。只有报告该 Tool 可用的 Host 才会收到任务。
-
-只修改 Prompt、`TOOLS.md` 或字符串允许列表，不代表 Tool 已经实现。
-
-## Runtime
-
-Control Plane 保存每次 Run 的内部状态：
-
-```text
-created
-  → resolving_intent
-  → planning
-  → awaiting_confirmation?
-  → admission_pending
-  → queued
-  → reserving
-  → dispatched
-  → accepted
-  → materializing
-  → running
-  → finalizing
-  → succeeded | failed | cancelled | timeout | orphaned
-```
-
-Backend 通常只向 Frontend 显示较少的产品状态：
-
-```text
-resolving → planning → awaiting_confirmation?
-          → queued → running / aborting
-          → succeeded | failed | cancelled | timeout
-```
-
-| 机制 | 处理的问题 |
-| --- | --- |
-| Admission | 确认 Backend 已经完成鉴权，并检查当前 Runtime 是否具备执行条件 |
-| Scheduler / Capacity / Reservation | 按版本、Tool 和空闲位置选择 Host；没有容量时排队；提交前短暂保留空位 |
-| Session Admission | 同一个 Harness Session 同时只运行一个会修改会话的 Run |
-| Lease / Heartbeat / Fence | 记录当前执行者是否还在线，并阻止失去所有权的旧 Worker 写入 |
-| RunTicket | 给单次 Run 签发短期授权，限制它只能使用指定团队、Workspace、Host、Plan 和 Manifest |
-| Idempotency | 相同请求重复提交或网络重试时只执行一次、只写入一份结果 |
-| Event Store | 给每个事件分配递增序号；SSE 断线后可以从上次 cursor 继续读取 |
-| Capability Handshake | 调度前确认 Host 确实支持本次需要的版本、Tool、模型窗口和取消功能 |
-| Tool Policy / Workspace Isolation | 只开放 Plan 需要的 Tool 和 Manifest 中的文件，阻止越权路径和文件逃逸 |
-| Budget / Loop Guard | 限制重复 Tool 调用、搜索、写入、Token 和执行时间，避免无限循环 |
-| Timeout / Abort | 区分用户取消、任务超时、Provider 失败和强制终止 |
-| Recovery / Terminal Convergence | 从数据库中的 Run、Lease 和 Event 继续恢复，并确保结果、Usage 和资源释放各执行一次 |
-| Output Contract | Run 开始前固定输出格式和解析版本，结束时不重新选择 Skill |
-| Usage / Error Normalization | 返回原始用量和统一错误，不向 Frontend 泄露密钥或内部路径 |
-
-### Sessions and Compression
-
-| 内容 | 保存位置 | 保存多久 |
-| --- | --- | --- |
-| 用户长期资料 | 产品数据库、对象存储或 Formal Workspace | 由 Backend 长期管理 |
-| 对话历史和压缩后的摘要 | Harness Session Store | 跟随 `threadId`，可以跨 Run 继续使用 |
-| 当前请求、附件和临时输出 | Run Workspace | 只属于一次 Run |
-
-Backend 维护 `threadId → Harness Session Key` 的服务端映射。`contextGeneration` 变化后，旧 Session 不再用于新的 Workspace 上下文。
-
-长上下文压缩以即将发送给模型的完整 Prompt 为准，包括历史消息、旧摘要、Tool 结果、系统规则、Workspace 规则、Tool Schema、当前请求和图片。
-
-```text
-组装完整 Prompt，并按当前模型窗口预留输出空间
-  ├── 没有超出窗口 → 发送
-  └── 超出窗口
-        ├── 将较早的对话和已经完成的 Tool 结果写成结构化摘要
-        ├── 保留最近的原始消息，必要时只保留摘要
-        ├── 重新组装并再次计算，直到放得下
-        └── 当前请求、系统规则等不可删除内容仍然过大 → 明确返回失败
-```
-
-结构化摘要保留用户目标、限制条件、关键决定、已完成动作、Tool 证据、当前状态和待办事项。系统规则、当前请求和 Tool Schema 不会为了塞进模型窗口而被静默删除。压缩后仍会检查重复 Tool 调用和无进展循环。
-
-Event Store 有另一套清理规则。Run 结束后可以删除早期 `draft_delta`，但必须保留最终状态和最终 Assistant 消息。事件清理与对话上下文压缩不是同一件事。
-
-### Harness Drivers
-
-Control Plane 只依赖 Driver 契约，不直接依赖 OpenClaw 私有数据结构。
-
-| Driver 能力 | 必须实现的行为 |
-| --- | --- |
-| Submit | 接收已经确定的 Plan、Manifest、Session、Tool Policy 和输入，同一个 Run 只启动一次 |
-| Status / Events | 将 Harness 的状态、进度、Tool、草稿和最终结果转换成 Yuex 事件 |
-| Abort | 取消模型和 Tool 执行，并返回最终取消状态 |
-| Capabilities | 报告版本、Tool Schema、模型窗口、预算和取消能力 |
-| Session | 维护产品 `threadId` 与 Harness 原生 Session 的映射 |
-| Workspace | 只访问本次 Run 创建的临时 Workspace |
-| Context | 提供模型窗口计算、上下文压缩或同等能力 |
-| Result / Usage | 返回统一格式的 Assistant 结果、错误类型和原始 Usage |
-
-接入 Codex 或其他 Harness 时，产品账号、套餐、Thread、Workspace 和业务结果保持不变。新的 Driver 负责该 Harness 的启动、事件、取消、Session、Tool 和上下文处理。
-
-## Repository Layout
-
-| 目录 | 内容 |
-| --- | --- |
-| `extracted/go-runtime-control-plane/internal/runtime/` | Plan、Workspace 组合、Scheduler、Host、Capacity、Lease、Fence、Recovery、Event、Usage 和最终状态处理 |
-| `extracted/go-runtime-adapter/cmd/openclaw-runtime-adapter/` | Go Runtime Host、HTTP Transport、Host 注册/心跳和 Gateway Bridge |
-| `extracted/openclaw-driver/overlay/` | OpenClaw 企业 Run、策略、能力报告、事件和恢复扩展 |
-| `extracted/openclaw-driver/tooling/` | Overlay 安装、契约生成和源检查工具 |
-| `cut-boundary-reference/` | 原 Backend 的 API、Worker、Storage、Workspace Search 和部署接线参考；不属于独立 Runtime Core |
+当前拆分边界和待补接口以代码为准。`cut-boundary-reference/` 保留的是迁移证据，不代表新产品应原样复制整个目录；新接入应从 `examples/backend/` 的职责链开始，再实现自己的存储、认证和业务规则。
 
 ## License
 
-本仓库原创代码按 [GNU Affero General Public License v3.0 only](LICENSE) 发布。OpenClaw 及其他第三方组件继续适用各自许可证，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+Yuex 使用 [GNU Affero General Public License v3.0](LICENSE)。通过网络向用户提供修改后的版本时，AGPL 要求向这些用户提供相应源代码。OpenClaw 与其他第三方组件仍分别受其自身许可证约束，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
