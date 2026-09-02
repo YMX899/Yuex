@@ -4,7 +4,7 @@
 
 Yuex 提供可复用的 Agent 生产运行层。产品 Backend 负责用户、权限、业务数据和计费；Yuex 负责 Run 调度、并发控制、故障恢复、事件记录和 Harness 接入。
 
-当前 Driver 接入 [OpenClaw](https://github.com/openclaw/openclaw)。感谢 OpenClaw 社区提供开源的 Agent Loop、Session 和 Tool 基础。OpenClaw Core 不是本项目的原创代码；Yuex 实现的是它上方的生产控制层。Harness Driver 可以替换为 Codex 或其他 Agent Runtime。
+当前 OpenClaw Driver 接入 [OpenClaw](https://github.com/openclaw/openclaw)。感谢 OpenClaw 社区提供开源的 Agent Loop、Session 和 Tool 基础。OpenClaw Core 不是本项目的原创代码；Yuex 实现的是它上方的生产控制层。通过实现新的 Harness Driver，同一控制面可以接入 Codex 或其他 Agent Runtime。
 
 > 本仓库是从现有工程复制的实现快照。核心机制来自实际运行代码，但部分 Go import、持久化和回调仍与原 Backend 相连。当前版本用于阅读、验证边界和继续独立化，不是开箱即用的独立发行版。
 
