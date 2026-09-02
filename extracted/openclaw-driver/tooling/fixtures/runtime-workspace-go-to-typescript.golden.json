@@ -1,0 +1,21 @@
+{
+  "read": {
+    "realPath": "/var/lib/huahuo/runtime-workspaces/run_read",
+    "accessMode": "read"
+  },
+  "write": {
+    "realPath": "/var/lib/huahuo/runtime-workspaces/run_write",
+    "accessMode": "write",
+    "writeLease": {
+      "version": "huahuo.runtime-write-lease.v1",
+      "runId": "run_write",
+      "workspaceId": "workspace_1",
+      "workspaceManifestHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "allowedRoots": [
+        "output",
+        "staging"
+      ],
+      "expiresAt": 1784192400
+    }
+  }
+}

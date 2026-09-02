@@ -1,0 +1,35 @@
+[Unit]
+Description=Huahuo OpenClaw Runtime HTTP Adapter
+After=network.target openclaw-enterprise-runtime.service
+Requires=openclaw-enterprise-runtime.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/huahuoai-backend/source
+EnvironmentFile=-/home/huahuo-runtime/config/huahuo-runtime.env
+EnvironmentFile=-/home/huahuo-runtime/secure-env/auth.env
+EnvironmentFile=/home/huahuo-runtime/secure-env/runtime-openclaw.env
+EnvironmentFile=/home/huahuo-runtime/secure-env/runtime-host-adapter.env
+EnvironmentFile=/home/huahuo-runtime/config/runtime-capabilities.env
+EnvironmentFile=-/home/huahuo-runtime/secure-env/object-upload.env
+EnvironmentFile=-/home/huahuo-runtime/secure-env/runtime-mimo.env
+EnvironmentFile=/home/agent-runtime/openclaw-enterprise-runtime/.env
+Environment=HUAHUO_OPENCLAW_ADAPTER_ADDR=:18790
+Environment=HUAHUO_OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789
+Environment=HUAHUO_OPENCLAW_ENTERPRISE_RUNTIME_CONFIG_PATH=/home/huahuo-runtime/config/openclaw-enterprise-runtime.json
+Environment=OPENCLAW_ENTERPRISE_RUNTIME_CONFIG=/home/huahuo-runtime/config/openclaw-enterprise-runtime.json
+Environment=HUAHUO_OPENCLAW_RUNTIME_STATE_DIR=/home/huahuo-runtime/state/openclaw-enterprise-runtime
+Environment=OPENCLAW_STATE_DIR=/home/huahuo-runtime/state/openclaw-enterprise-runtime
+Environment=HUAHUO_OPENCLAW_RUNTIME_LOGS_DIR=/home/huahuo-runtime/logs/openclaw-enterprise-runtime
+Environment=OPENCLAW_ENTERPRISE_RUNTIME_LOGS_DIR=/home/huahuo-runtime/logs/openclaw-enterprise-runtime
+Environment=HUAHUO_OPENCLAW_RUNTIME_TMP_ROOT=/home/huahuo-runtime/tmp/openclaw-enterprise-runtime
+Environment=OPENCLAW_ENTERPRISE_RUNTIME_TMP_ROOT=/home/huahuo-runtime/tmp/openclaw-enterprise-runtime
+Environment=OPENCLAW_BUNDLED_PLUGINS_DIR=/home/agent-runtime/openclaw-enterprise-runtime/dist/extensions
+ExecStart=/opt/huahuoai-backend/source/bin/openclaw-runtime-adapter
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

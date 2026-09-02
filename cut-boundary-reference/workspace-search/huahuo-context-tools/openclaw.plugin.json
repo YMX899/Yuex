@@ -1,0 +1,10 @@
+{
+  "id": "huahuo-context-tools",
+  "version": "0.5.0",
+  "enabledByDefault": true,
+  "activation": { "onStartup": true },
+  "name": "Huahuo Context Tools",
+  "description": "Run-authorized path-only hybrid Workspace search backed by the Huahuo Search Service.",
+  "contracts": { "tools": ["workspace_search"] },
+  "configSchema": { "type": "object", "additionalProperties": false, "properties": {} }
+}

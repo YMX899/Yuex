@@ -1,0 +1,30 @@
+[Unit]
+Description=OpenClaw Enterprise Runtime Gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/agent-runtime/openclaw-enterprise-runtime
+EnvironmentFile=-/home/huahuo-runtime/config/huahuo-runtime.env
+EnvironmentFile=-/home/huahuo-runtime/secure-env/runtime-openclaw.env
+EnvironmentFile=/home/huahuo-runtime/config/runtime-capabilities.env
+EnvironmentFile=-/home/huahuo-runtime/secure-env/runtime-mimo.env
+EnvironmentFile=/home/agent-runtime/openclaw-enterprise-runtime/.env
+Environment=OPENCLAW_SKIP_CHANNELS=1
+Environment=OPENCLAW_DISABLE_BONJOUR=1
+Environment=OPENCLAW_CONFIG_PATH=/home/huahuo-runtime/config/openclaw-gateway.json
+Environment=OPENCLAW_ENTERPRISE_RUNTIME_CONFIG=/home/huahuo-runtime/config/openclaw-enterprise-runtime.json
+Environment=OPENCLAW_STATE_DIR=/home/huahuo-runtime/state/openclaw-enterprise-runtime
+Environment=OPENCLAW_ENTERPRISE_RUNTIME_LOGS_DIR=/home/huahuo-runtime/logs/openclaw-enterprise-runtime
+Environment=OPENCLAW_ENTERPRISE_RUNTIME_TMP_ROOT=/home/huahuo-runtime/tmp/openclaw-enterprise-runtime
+Environment=OPENCLAW_BUNDLED_PLUGINS_DIR=/home/agent-runtime/openclaw-enterprise-runtime/dist/extensions
+Environment=NODE_OPTIONS=--max-old-space-size=4096
+ExecStart=/usr/bin/node /home/agent-runtime/openclaw-enterprise-runtime/dist/index.js gateway --allow-unconfigured --auth token --bind lan --port 18789
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

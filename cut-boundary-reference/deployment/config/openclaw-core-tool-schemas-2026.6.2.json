@@ -1,0 +1,52 @@
+{
+  "openclawVersion": "2026.6.2",
+  "sourceFiles": {
+    "read": {
+      "relativePath": "src/agents/sessions/tools/read.ts",
+      "sha256": "f0f8b323c65181f3b557b8b56a21889e7b3ba98bf024c23a716d7b70c6ce3776"
+    },
+    "write": {
+      "relativePath": "src/agents/sessions/tools/write.ts",
+      "sha256": "4a804ba064b08f17f00e121707a09b97dda78ed0efd8a9ed215c186fd6dda855"
+    }
+  },
+  "schemas": {
+    "read": {
+      "type": "object",
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Path to the file to read (relative or absolute)"
+        },
+        "offset": {
+          "type": "number",
+          "description": "Line number to start reading from (1-indexed)"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Maximum number of lines to read"
+        }
+      }
+    },
+    "write": {
+      "type": "object",
+      "required": [
+        "path",
+        "content"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Path to the file to write (relative or absolute)"
+        },
+        "content": {
+          "type": "string",
+          "description": "Content to write to the file"
+        }
+      }
+    }
+  }
+}

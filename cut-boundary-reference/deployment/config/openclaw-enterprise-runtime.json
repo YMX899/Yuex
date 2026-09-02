@@ -1,0 +1,914 @@
+{
+  "runtimeConfigs": [
+    {
+      "id": "huahuo-default",
+      "version": "v1",
+      "stateDir": "/home/huahuo-runtime/state/openclaw-enterprise-runtime",
+      "logsDir": "/home/huahuo-runtime/logs/openclaw-enterprise-runtime",
+      "tmpRoot": "/home/huahuo-runtime/tmp/openclaw-enterprise-runtime",
+      "model": {
+        "modelProfileId": "mimo-default",
+        "thinking": "off",
+        "reasoning": "off",
+        "params": {
+          "temperature": 0.2
+        }
+      },
+      "limits": {
+        "maxRunSeconds": 3600,
+        "maxToolCalls": 200
+      },
+      "overridePolicy": {
+        "model": {
+          "allowedFields": [
+            "params"
+          ],
+          "allowedThinking": [
+            "off"
+          ],
+          "allowParams": [
+            "temperature",
+            "top_p"
+          ],
+          "maxTimeoutSeconds": 3600,
+          "maxTokens": 8192
+        },
+        "tools": {
+          "allowRuntimeAllowList": true,
+          "allowRuntimeDenyList": true
+        }
+      },
+      "plugins": {
+        "enabled": [
+          "huahuo-context-tools"
+        ]
+      },
+      "sessionStoreId": "huahuo-file-session",
+      "artifactStoreId": "huahuo-file-artifacts",
+      "prompt": {
+        "mode": "full",
+        "extraSystemPrompt": "Huahuo Enterprise Runtime default profile. OpenClaw Runtime owns system prompt and skill snapshot injection. Backend input.message is only the short current turn and must not contain SKILL.md bodies, raw transcripts, secrets, signed URLs, or real paths. Treat input.message as the current user turn. Do not expect backend-embedded SKILL.md content. Load skills and workspace context through OpenClaw runtime skill snapshot and workspace rules. Follow the selected task skill as the primary contract. For Feed AI product-thread runs, especially when the selected skill or task metadata is profile_maintenance/feed_ai_chat, respond as a warm account-positioning consultant rather than a generic assistant. If the user gives only a greeting or thin input, invite one richer intake message without inventing evidence. When profile_maintenance defines the `huahuo-positioning-progress` rendering contract, a Feed AI final answer is incomplete without exactly one final fenced progress block; thin greetings should emit an empty or low-confidence pulse."
+      }
+    },
+    {
+      "id": "huahuo-high-thinking",
+      "version": "v1",
+      "stateDir": "/home/huahuo-runtime/state/openclaw-enterprise-runtime",
+      "logsDir": "/home/huahuo-runtime/logs/openclaw-enterprise-runtime",
+      "tmpRoot": "/home/huahuo-runtime/tmp/openclaw-enterprise-runtime",
+      "model": {
+        "modelProfileId": "mimo-default",
+        "thinking": "off",
+        "reasoning": "off",
+        "params": {
+          "temperature": 0.2
+        }
+      },
+      "limits": {
+        "maxRunSeconds": 3600,
+        "maxToolCalls": 200
+      },
+      "overridePolicy": {
+        "model": {
+          "allowedFields": [
+            "params"
+          ],
+          "allowedThinking": [
+            "off"
+          ],
+          "allowParams": [
+            "temperature",
+            "top_p"
+          ],
+          "maxTimeoutSeconds": 3600,
+          "maxTokens": 12000
+        },
+        "tools": {
+          "allowRuntimeAllowList": true,
+          "allowRuntimeDenyList": true
+        }
+      },
+      "plugins": {
+        "enabled": [
+          "huahuo-context-tools"
+        ]
+      },
+      "sessionStoreId": "huahuo-file-session",
+      "artifactStoreId": "huahuo-file-artifacts",
+      "prompt": {
+        "mode": "full",
+        "extraSystemPrompt": "Huahuo high-budget runtime profile. OpenClaw Runtime owns system prompt and skill snapshot injection. Backend input.message is only the short current task turn and must not contain SKILL.md bodies, raw transcripts, secrets, signed URLs, or real paths. Treat input.message as the current task turn. Use OpenClaw runtime skills and workspace context; never rely on backend-embedded skill bodies or secrets."
+      }
+    },
+    {
+      "id": "huahuo-topic-generation",
+      "version": "v1",
+      "stateDir": "/home/huahuo-runtime/state/openclaw-enterprise-runtime",
+      "logsDir": "/home/huahuo-runtime/logs/openclaw-enterprise-runtime",
+      "tmpRoot": "/home/huahuo-runtime/tmp/openclaw-enterprise-runtime",
+      "sessionStoreId": "huahuo-file-session",
+      "artifactStoreId": "huahuo-file-artifacts",
+      "model": {
+        "modelProfileId": "mimo-default",
+        "thinking": "off",
+        "reasoning": "off",
+        "params": {
+          "temperature": 0.2
+        }
+      },
+      "prompt": {
+        "mode": "full",
+        "extraSystemPrompt": "Huahuo Work AI topic generation profile. OpenClaw Runtime owns system prompt and skill snapshot injection. Backend input.message is only the short product-created task turn and must not contain SKILL.md bodies, raw transcripts, secrets, signed URLs, or real paths. Treat input.message as a short product-created task turn. Use the loaded workspace topic_generation skill and workspace-relative input files such as input/task.json, input/user_request.md, input/assets.json, input/source_workspace_refs.json, input/materials.json, and input/hotspot.json when present. Do not require backend-embedded skill text. Return a useful topic generation result in the final answer as Markdown/text or as a topic_generation.result.v1 JSON object. If material is thin, still produce a concise useful topic result unless the task explicitly requires failure."
+      },
+      "limits": {
+        "maxRunSeconds": 3600,
+        "maxToolCalls": 200
+      },
+      "overridePolicy": {
+        "model": {
+          "allowedFields": [
+            "params"
+          ],
+          "allowedThinking": [
+            "off"
+          ],
+          "allowParams": [
+            "temperature",
+            "top_p"
+          ],
+          "maxTimeoutSeconds": 3600,
+          "maxTokens": 8192
+        },
+        "tools": {
+          "allowRuntimeAllowList": true,
+          "allowRuntimeDenyList": true
+        }
+      },
+      "plugins": {
+        "enabled": [
+          "huahuo-context-tools"
+        ]
+      }
+    },
+    {
+      "id": "huahuo-recording-postprocess",
+      "version": "v1",
+      "stateDir": "/home/huahuo-runtime/state/openclaw-enterprise-runtime",
+      "logsDir": "/home/huahuo-runtime/logs/openclaw-enterprise-runtime",
+      "tmpRoot": "/home/huahuo-runtime/tmp/openclaw-enterprise-runtime",
+      "sessionStoreId": "huahuo-file-session",
+      "artifactStoreId": "huahuo-file-artifacts",
+      "model": {
+        "modelProfileId": "mimo-voice-analysis",
+        "thinking": "off",
+        "reasoning": "off",
+        "params": {
+          "temperature": 0.1
+        }
+      },
+      "prompt": {
+        "mode": "full",
+        "extraSystemPrompt": "Huahuo recording postprocess profile. OpenClaw Runtime owns system prompt and skill snapshot injection. Backend input.message is only the short detached task turn and must not contain SKILL.md bodies, raw transcripts, secrets, signed URLs, or real paths. Treat input.message as a one-sentence file-transform instruction. Read only the declared input files under input/. If OpenClaw lists a matching selected workspace skill in <available_skills>, read exactly that workspace skill location and do not invent absolute skill paths. Do not browse formal workspaces, unrelated skill files, server paths, logs, session files, output files, unrelated directories, or exploratory tool loops. For minutes_generation, return a clear Markdown meeting-minutes document in the final answer. For summary_generation, return a concise recording asset summary in the final answer. Do not return only done/complete status. Do not write or edit output files; do not read or write output/result.json, output/minutes.md, or output/summary.md. Do not call update_goal. Recording minutes must not be forced into a raw JSON envelope as the primary result."
+      },
+      "limits": {
+        "maxRunSeconds": 3600,
+        "maxToolCalls": 200
+      },
+      "overridePolicy": {
+        "model": {
+          "allowedFields": [
+            "params"
+          ],
+          "allowedThinking": [
+            "off"
+          ],
+          "allowParams": [
+            "temperature",
+            "top_p"
+          ],
+          "maxTimeoutSeconds": 3600,
+          "maxTokens": 12000
+        },
+        "tools": {
+          "allowRuntimeAllowList": true,
+          "allowRuntimeDenyList": true
+        }
+      },
+      "plugins": {
+        "enabled": [
+          "huahuo-context-tools"
+        ]
+      }
+    },
+    {
+      "id": "huahuo-renshe-content",
+      "version": "v1",
+      "stateDir": "/home/huahuo-runtime/state/openclaw-enterprise-runtime",
+      "logsDir": "/home/huahuo-runtime/logs/openclaw-enterprise-runtime",
+      "tmpRoot": "/home/huahuo-runtime/tmp/openclaw-enterprise-runtime",
+      "sessionStoreId": "huahuo-file-session",
+      "artifactStoreId": "huahuo-file-artifacts",
+      "model": {
+        "modelProfileId": "mimo-default",
+        "thinking": "off",
+        "reasoning": "off",
+        "params": {
+          "temperature": 0.1
+        }
+      },
+      "limits": {
+        "maxRunSeconds": 3600,
+        "maxToolCalls": 200
+      },
+      "overridePolicy": {
+        "model": {
+          "allowedFields": [
+            "params"
+          ],
+          "allowedThinking": [
+            "off"
+          ],
+          "allowParams": [
+            "temperature",
+            "top_p"
+          ],
+          "maxTimeoutSeconds": 3600,
+          "maxTokens": 12000
+        },
+        "tools": {
+          "allowRuntimeAllowList": true,
+          "allowRuntimeDenyList": true
+        }
+      },
+      "plugins": {
+        "enabled": [
+          "huahuo-context-tools"
+        ]
+      },
+      "prompt": {
+        "mode": "full",
+        "extraSystemPrompt": "Huahuo Renshe content runtime. OpenClaw Runtime owns system prompt and skill snapshot injection. Backend input.message is only the short current user turn and must not contain SKILL.md bodies, raw transcripts, secrets, signed URLs, or real paths. Follow the selected renshe_content_creation Skill as the sole visible content-creation contract. Keep internal workflow and runtime details out of the final answer."
+      }
+    },
+    {
+      "id": "huahuo-huoke-content",
+      "version": "v3",
+      "stateDir": "/home/huahuo-runtime/state/openclaw-enterprise-runtime",
+      "logsDir": "/home/huahuo-runtime/logs/openclaw-enterprise-runtime",
+      "tmpRoot": "/home/huahuo-runtime/tmp/openclaw-enterprise-runtime",
+      "sessionStoreId": "huahuo-file-session",
+      "artifactStoreId": "huahuo-file-artifacts",
+      "model": {
+        "modelProfileId": "mimo-default",
+        "thinking": "high",
+        "reasoning": "stream",
+        "maxTokens": 65536,
+        "params": {
+          "temperature": 0,
+          "response_format": {
+            "type": "json_object"
+          }
+        }
+      },
+      "limits": {
+        "maxRunSeconds": 3600,
+        "maxToolCalls": 40
+      },
+      "tools": {
+        "allow": [
+          "read",
+          "workspace_search"
+        ],
+        "deny": [
+          "nodes",
+          "dir_list",
+          "dir_fetch",
+          "file_fetch",
+          "file_write",
+          "browser",
+          "canvas",
+          "exec",
+          "process",
+          "write",
+          "get_goal"
+        ]
+      },
+      "overridePolicy": {
+        "model": {
+          "allowedFields": [
+            "params"
+          ],
+          "allowedThinking": [
+            "off",
+            "high"
+          ],
+          "allowParams": [
+            "temperature",
+            "top_p",
+            "response_format"
+          ],
+          "maxTimeoutSeconds": 3600,
+          "maxTokens": 65536
+        },
+        "tools": {
+          "allowRuntimeAllowList": true,
+          "allowRuntimeDenyList": true
+        }
+      },
+      "plugins": {
+        "enabled": [
+          "huahuo-context-tools"
+        ]
+      },
+      "prompt": {
+        "mode": "full",
+        "extraSystemPrompt": "Huahuo Huoke content runtime. OpenClaw Runtime owns system prompt and skill snapshot injection. Backend input.message is only the short current user turn and must not contain SKILL.md bodies, raw transcripts, secrets, signed URLs, or real paths. Follow the selected huoke_content_creation Skill and return its required structured result without exposing internal runtime details."
+      }
+    },
+    {
+      "id": "huahuo-huoke-topic",
+      "version": "v15",
+      "stateDir": "/home/huahuo-runtime/state/openclaw-enterprise-runtime",
+      "logsDir": "/home/huahuo-runtime/logs/openclaw-enterprise-runtime",
+      "tmpRoot": "/home/huahuo-runtime/tmp/openclaw-enterprise-runtime",
+      "sessionStoreId": "huahuo-file-session",
+      "artifactStoreId": "huahuo-file-artifacts",
+      "model": {
+        "modelProfileId": "mimo-default",
+        "thinking": "high",
+        "reasoning": "stream",
+        "maxTokens": 65536,
+        "timeoutSeconds": 600,
+        "params": {
+          "temperature": 0.2,
+          "response_format": {
+            "type": "json_object"
+          }
+        }
+      },
+      "limits": {
+        "maxRunSeconds": 3600,
+        "maxToolCalls": 40
+      },
+      "tools": {
+        "allow": [
+          "read",
+          "workspace_search",
+          "write"
+        ],
+        "deny": [
+          "nodes",
+          "file_write",
+          "browser",
+          "canvas",
+          "exec",
+          "process"
+        ]
+      },
+      "overridePolicy": {
+        "model": {
+          "allowedFields": [
+            "params"
+          ],
+          "allowedThinking": [
+            "off",
+            "high"
+          ],
+          "allowParams": [
+            "temperature",
+            "top_p",
+            "response_format"
+          ],
+          "maxTimeoutSeconds": 3600,
+          "maxTokens": 65536
+        },
+        "tools": {
+          "allowRuntimeAllowList": true,
+          "allowRuntimeDenyList": true
+        }
+      },
+      "plugins": {
+        "enabled": [
+          "huahuo-context-tools"
+        ]
+      },
+      "prompt": {
+        "mode": "full",
+        "extraSystemPrompt": "Huahuo Huoke topic strategy runtime. OpenClaw Runtime owns system prompt and skill snapshot injection. Backend input.message is only the short current user turn and must not contain SKILL.md bodies, raw transcripts, secrets, signed URLs, or real paths. Follow the selected huoke_topic_strategy Skill and preserve its state-envelope result contract."
+      }
+    },
+    {
+      "id": "huahuo-self-media-creation",
+      "version": "v1",
+      "stateDir": "/home/huahuo-runtime/state/openclaw-enterprise-runtime",
+      "logsDir": "/home/huahuo-runtime/logs/openclaw-enterprise-runtime",
+      "tmpRoot": "/home/huahuo-runtime/tmp/openclaw-enterprise-runtime",
+      "sessionStoreId": "huahuo-file-session",
+      "artifactStoreId": "huahuo-file-artifacts",
+      "model": {
+        "modelProfileId": "mimo-default",
+        "thinking": "high",
+        "reasoning": "stream",
+        "params": {
+          "temperature": 0.4
+        }
+      },
+      "limits": {
+        "maxRunSeconds": 3600,
+        "maxToolCalls": 80
+      },
+      "tools": {
+        "allow": [
+          "read",
+          "workspace_search"
+        ],
+        "deny": [
+          "nodes",
+          "file_write",
+          "write",
+          "browser",
+          "canvas",
+          "exec",
+          "process"
+        ]
+      },
+      "overridePolicy": {
+        "model": {
+          "allowedFields": [
+            "params"
+          ],
+          "allowedThinking": [
+            "off",
+            "high"
+          ],
+          "allowParams": [
+            "temperature",
+            "top_p"
+          ],
+          "maxTimeoutSeconds": 3600,
+          "maxTokens": 12000
+        },
+        "tools": {
+          "allowRuntimeAllowList": true,
+          "allowRuntimeDenyList": true
+        }
+      },
+      "plugins": {
+        "enabled": [
+          "huahuo-context-tools"
+        ]
+      },
+      "prompt": {
+        "mode": "full",
+        "extraSystemPrompt": "Huahuo self-media creation runtime. OpenClaw Runtime owns system prompt and skill snapshot injection. Backend input.message is only the short current user turn and must not contain SKILL.md bodies, raw transcripts, secrets, signed URLs, or real paths. Follow the selected self_media_creation_advisor Skill and keep the response grounded in the current user request."
+      }
+    },
+    {
+      "id": "huahuo-faya-germination",
+      "version": "v3",
+      "stateDir": "/home/huahuo-runtime/state/openclaw-enterprise-runtime",
+      "logsDir": "/home/huahuo-runtime/logs/openclaw-enterprise-runtime",
+      "tmpRoot": "/home/huahuo-runtime/tmp/openclaw-enterprise-runtime",
+      "sessionStoreId": "huahuo-file-session",
+      "artifactStoreId": "huahuo-file-artifacts",
+      "model": {
+        "modelProfileId": "mimo-default",
+        "thinking": "off",
+        "reasoning": "stream",
+        "params": {
+          "temperature": 0.58
+        }
+      },
+      "limits": {
+        "maxRunSeconds": 3600,
+        "maxToolCalls": 80
+      },
+      "tools": {
+        "allow": [
+          "read"
+        ],
+        "deny": [
+          "nodes",
+          "file_write",
+          "write",
+          "browser",
+          "canvas",
+          "exec",
+          "process"
+        ]
+      },
+      "overridePolicy": {
+        "model": {
+          "allowedFields": [
+            "params"
+          ],
+          "allowedThinking": [
+            "off"
+          ],
+          "allowParams": [
+            "temperature",
+            "top_p"
+          ],
+          "maxTimeoutSeconds": 3600,
+          "maxTokens": 12000
+        },
+        "tools": {
+          "allowRuntimeAllowList": true,
+          "allowRuntimeDenyList": true
+        }
+      },
+      "plugins": {
+        "enabled": [
+          "huahuo-context-tools"
+        ]
+      },
+      "prompt": {
+        "mode": "full",
+        "extraSystemPrompt": "Huahuo Faya germination runtime. OpenClaw Runtime owns system prompt and skill snapshot injection. Backend input.message is only the short current user turn and must not contain SKILL.md bodies, raw transcripts, secrets, signed URLs, or real paths. Follow the selected viewpoint_germination Skill as the sole visible capability and return its required result contract."
+      }
+    },
+    {
+      "id": "huahuo-visual-chat",
+      "version": "v1",
+      "stateDir": "/home/huahuo-runtime/state/openclaw-enterprise-runtime",
+      "logsDir": "/home/huahuo-runtime/logs/openclaw-enterprise-runtime",
+      "tmpRoot": "/home/huahuo-runtime/tmp/openclaw-enterprise-runtime",
+      "sessionStoreId": "huahuo-file-session",
+      "artifactStoreId": "huahuo-file-artifacts",
+      "model": {
+        "modelProfileId": "mimo-visual",
+        "thinking": "off",
+        "reasoning": "stream",
+        "params": {
+          "temperature": 0.45
+        }
+      },
+      "limits": {
+        "maxRunSeconds": 3600,
+        "maxToolCalls": 8
+      },
+      "tools": {
+        "allow": [
+          "read",
+          "workspace_search"
+        ],
+        "deny": [
+          "nodes",
+          "file_write",
+          "write",
+          "browser",
+          "canvas",
+          "exec",
+          "process"
+        ]
+      },
+      "overridePolicy": {
+        "model": {
+          "allowedFields": [
+            "params"
+          ],
+          "allowedThinking": [
+            "off"
+          ],
+          "allowParams": [
+            "temperature",
+            "top_p"
+          ],
+          "maxTimeoutSeconds": 3600,
+          "maxTokens": 12000
+        },
+        "tools": {
+          "allowRuntimeAllowList": true,
+          "allowRuntimeDenyList": true
+        }
+      },
+      "plugins": {
+        "enabled": [
+          "huahuo-context-tools"
+        ]
+      },
+      "prompt": {
+        "mode": "full",
+        "extraSystemPrompt": "Huahuo visual chat runtime v1. OpenClaw Runtime owns system prompt and skill snapshot injection. Backend input.message is only the short current user turn and must not contain SKILL.md bodies, raw transcripts, secrets, signed URLs, or real paths. This is a Chinese visual analysis chat Agent: analyze a trusted current-turn image attachment when present and answer ordinary questions directly. A trusted current-turn attachment manifest is the only source for a referenceResourceId; copy it exactly only when the user asks to analyze that reference image. Do not generate, edit, synthesize, or claim to create image output. Never invent attachment identifiers, paths, URLs, facts, generated assets, tool results, provider details, or credentials. Keep Workspace access read-only and do not fall back to Feed AI or a generic Agent. Return natural Chinese text or exactly one visual_chat_assistant.result.v1 object when structured output is required."
+      }
+    }
+  ],
+  "modelProfiles": [
+    {
+      "id": "mimo-default",
+      "provider": "xiaomimimo",
+      "model": "mimo-v2.5",
+      "api": "openai-completions",
+      "baseUrl": "https://api.xiaomimimo.com/v1",
+      "authPoolId": "runtime-model-default",
+      "input": [
+        "text"
+      ],
+      "thinking": "off",
+      "reasoning": "off",
+      "contextWindow": 131072,
+      "contextTokens": 100000,
+      "maxTokens": 8192,
+      "timeoutSeconds": 600,
+      "authHeader": true,
+      "params": {
+        "temperature": 0.2
+      }
+    },
+    {
+      "id": "mimo-visual",
+      "provider": "xiaomimimo",
+      "model": "mimo-v2.5",
+      "api": "openai-completions",
+      "baseUrl": "https://api.xiaomimimo.com/v1",
+      "authPoolId": "runtime-model-default",
+      "input": [
+        "text",
+        "image"
+      ],
+      "thinking": "off",
+      "reasoning": "stream",
+      "contextWindow": 131072,
+      "contextTokens": 100000,
+      "maxTokens": 8192,
+      "timeoutSeconds": 600,
+      "authHeader": true,
+      "params": {
+        "temperature": 0.2
+      }
+    },
+    {
+      "id": "mimo-voice-analysis",
+      "provider": "xiaomimimo",
+      "model": "mimo-v2.5",
+      "api": "openai-completions",
+      "baseUrl": "https://api.xiaomimimo.com/v1",
+      "authPoolId": "runtime-model-voice-analysis",
+      "input": [
+        "text"
+      ],
+      "thinking": "off",
+      "reasoning": "off",
+      "contextWindow": 131072,
+      "contextTokens": 100000,
+      "maxTokens": 8192,
+      "authHeader": true,
+      "params": {
+        "temperature": 0.2
+      }
+    }
+  ],
+  "credentialPools": [
+    {
+      "id": "runtime-model-default",
+      "provider": "xiaomimimo",
+      "strategy": "least_busy",
+      "acquireTimeoutMs": 30000,
+      "keys": [
+        {
+          "keyId": "chuda-01",
+          "secretRef": "env:HUAHUO_MIMO_API_KEY",
+          "models": [
+            "mimo-v2.5"
+          ],
+          "maxConcurrent": 4,
+          "requestsPerMinute": 120
+        },
+        {
+          "keyId": "chuda-02",
+          "secretRef": "env:HUAHUO_MIMO_CHUDA_02",
+          "models": [
+            "mimo-v2.5"
+          ],
+          "maxConcurrent": 4,
+          "requestsPerMinute": 120
+        },
+        {
+          "keyId": "chuda-03",
+          "secretRef": "env:HUAHUO_MIMO_CHUDA_03",
+          "models": [
+            "mimo-v2.5"
+          ],
+          "maxConcurrent": 4,
+          "requestsPerMinute": 120
+        },
+        {
+          "keyId": "chuda-04",
+          "secretRef": "env:HUAHUO_MIMO_CHUDA_04",
+          "models": [
+            "mimo-v2.5"
+          ],
+          "maxConcurrent": 4,
+          "requestsPerMinute": 120
+        },
+        {
+          "keyId": "chuda-05",
+          "secretRef": "env:HUAHUO_MIMO_CHUDA_05",
+          "models": [
+            "mimo-v2.5"
+          ],
+          "maxConcurrent": 4,
+          "requestsPerMinute": 120
+        },
+        {
+          "keyId": "chuda-06",
+          "secretRef": "env:HUAHUO_MIMO_CHUDA_06",
+          "models": [
+            "mimo-v2.5"
+          ],
+          "maxConcurrent": 4,
+          "requestsPerMinute": 120
+        },
+        {
+          "keyId": "chuda-07",
+          "secretRef": "env:HUAHUO_MIMO_CHUDA_07",
+          "models": [
+            "mimo-v2.5"
+          ],
+          "maxConcurrent": 4,
+          "requestsPerMinute": 120
+        },
+        {
+          "keyId": "chuda-08",
+          "secretRef": "env:HUAHUO_MIMO_CHUDA_08",
+          "models": [
+            "mimo-v2.5"
+          ],
+          "maxConcurrent": 4,
+          "requestsPerMinute": 120
+        },
+        {
+          "keyId": "chuda-09",
+          "secretRef": "env:HUAHUO_MIMO_CHUDA_09",
+          "models": [
+            "mimo-v2.5"
+          ],
+          "maxConcurrent": 4,
+          "requestsPerMinute": 120
+        },
+        {
+          "keyId": "chuda-10",
+          "secretRef": "env:HUAHUO_MIMO_CHUDA_10",
+          "models": [
+            "mimo-v2.5"
+          ],
+          "maxConcurrent": 4,
+          "requestsPerMinute": 120
+        },
+        {
+          "keyId": "chuda-11",
+          "secretRef": "env:HUAHUO_MIMO_CHUDA_11",
+          "models": [
+            "mimo-v2.5"
+          ],
+          "maxConcurrent": 4,
+          "requestsPerMinute": 120
+        },
+        {
+          "keyId": "chuda-12",
+          "secretRef": "env:HUAHUO_MIMO_CHUDA_12",
+          "models": [
+            "mimo-v2.5"
+          ],
+          "maxConcurrent": 4,
+          "requestsPerMinute": 120
+        },
+        {
+          "keyId": "chuda-13",
+          "secretRef": "env:HUAHUO_MIMO_CHUDA_13",
+          "models": [
+            "mimo-v2.5"
+          ],
+          "maxConcurrent": 4,
+          "requestsPerMinute": 120
+        },
+        {
+          "keyId": "chuda-14",
+          "secretRef": "env:HUAHUO_MIMO_CHUDA_14",
+          "models": [
+            "mimo-v2.5"
+          ],
+          "maxConcurrent": 4,
+          "requestsPerMinute": 120
+        },
+        {
+          "keyId": "chuda-15",
+          "secretRef": "env:HUAHUO_MIMO_CHUDA_15",
+          "models": [
+            "mimo-v2.5"
+          ],
+          "maxConcurrent": 4,
+          "requestsPerMinute": 120
+        },
+        {
+          "keyId": "chuda-16",
+          "secretRef": "env:HUAHUO_MIMO_CHUDA_16",
+          "models": [
+            "mimo-v2.5"
+          ],
+          "maxConcurrent": 4,
+          "requestsPerMinute": 120
+        },
+        {
+          "keyId": "chuda-18",
+          "secretRef": "env:HUAHUO_MIMO_CHUDA_18",
+          "models": [
+            "mimo-v2.5"
+          ],
+          "maxConcurrent": 4,
+          "requestsPerMinute": 120
+        },
+        {
+          "keyId": "chuda-19",
+          "secretRef": "env:HUAHUO_MIMO_CHUDA_19",
+          "models": [
+            "mimo-v2.5"
+          ],
+          "maxConcurrent": 4,
+          "requestsPerMinute": 120
+        },
+        {
+          "keyId": "chuda-20",
+          "secretRef": "env:HUAHUO_MIMO_CHUDA_20",
+          "models": [
+            "mimo-v2.5"
+          ],
+          "maxConcurrent": 4,
+          "requestsPerMinute": 120
+        }
+      ],
+      "cooldown": {
+        "rateLimitMs": 60000,
+        "overloadedMs": 15000,
+        "quotaMs": 3600000,
+        "authErrorDisablesKey": true
+      },
+      "retry": {
+        "maxAttempts": 2,
+        "retryOn": [
+          "rate_limit",
+          "overloaded",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "id": "runtime-model-voice-analysis",
+      "provider": "xiaomimimo",
+      "strategy": "least_busy",
+      "acquireTimeoutMs": 30000,
+      "keys": [
+        {
+          "keyId": "chuda-voice-01",
+          "secretRef": "env:HUAHUO_MIMO_CHUDA_VOICE_01",
+          "models": [
+            "mimo-v2.5"
+          ],
+          "maxConcurrent": 4,
+          "requestsPerMinute": 120
+        },
+        {
+          "keyId": "chuda-voice-02",
+          "secretRef": "env:HUAHUO_MIMO_CHUDA_VOICE_02",
+          "models": [
+            "mimo-v2.5"
+          ],
+          "maxConcurrent": 4,
+          "requestsPerMinute": 120
+        }
+      ],
+      "cooldown": {
+        "rateLimitMs": 60000,
+        "overloadedMs": 15000,
+        "quotaMs": 3600000,
+        "authErrorDisablesKey": true
+      },
+      "retry": {
+        "maxAttempts": 2,
+        "retryOn": [
+          "rate_limit",
+          "overloaded",
+          "timeout"
+        ]
+      }
+    }
+  ],
+  "sessionStores": [
+    {
+      "id": "huahuo-file-session",
+      "type": "file",
+      "rootDir": "/home/huahuo-runtime/state/openclaw-enterprise-runtime/sessions",
+      "namespace": "huahuo",
+      "retentionDays": 30
+    }
+  ],
+  "artifactStores": [
+    {
+      "id": "huahuo-file-artifacts",
+      "type": "file",
+      "logsDir": "/home/huahuo-runtime/logs/openclaw-enterprise-runtime",
+      "tmpRoot": "/home/huahuo-runtime/tmp/openclaw-enterprise-runtime",
+      "retentionDays": 30
+    }
+  ]
+}

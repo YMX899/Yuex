@@ -1,0 +1,7 @@
+{
+  "name": "@huahuo/openclaw-context-tools",
+  "version": "0.5.0",
+  "type": "module",
+  "private": true,
+  "description": "Huahuo path-only Workspace Search tool"
+}
