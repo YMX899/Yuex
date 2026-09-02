@@ -2,81 +2,54 @@
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 
-Yuex 是放在产品 Backend 与 Agent Harness 之间的生产运行层。Backend 决定“谁可以发起任务、允许读取什么、最后写到哪里、如何计费”；Yuex 决定“一次 Agent 执行如何排队、由哪台机器执行、发生故障后怎样接管、事件和原始用量怎样留痕”。
+Codex、OpenClaw、Grok Build 这类 Agent Harness，已经能很好地帮助个人调用模型、使用工具、读写文件并保持会话。但把 Agent 放进一个真正的企业产品后，问题会变成另一套：几百个用户同时提交任务时怎样排队，客户之间的数据怎样隔离，Worker 或执行机宕机后任务怎样恢复，同一任务怎样避免重复执行，以及用量怎样准确回到会员、积分和账单。
 
-当前 Driver 接入 [OpenClaw](https://github.com/openclaw/openclaw)。感谢 OpenClaw 社区提供开源的 Agent Loop、Session 与 Tool 基础。OpenClaw Agent Core 不是本项目的原创代码；本仓库实现的是它上方的并发控制、Workspace 装配、执行所有权和恢复机制。Driver 是边界，后续也可以替换为 Codex 或其他优秀的 Agent Harness。
+市场上不缺能跑起来的 Agent，缺的是能把大量 Agent 任务稳定跑在企业产品里的通用运行层。
+
+这正是 Yuex 要解决的问题。它位于产品 Backend 与 Agent Harness 之间，为多租户、高并发的 Agent 服务提供统一的 Run、调度、执行隔离、事件记录和故障恢复。Backend 仍负责用户、权限、业务数据和计费规则；Harness 仍负责模型、Session 与 Tool Loop。Yuex 不取代它们，而是把两者连接成一套可以长期运行的商用执行系统。
+
+当前 Driver 接入 [OpenClaw](https://github.com/openclaw/openclaw)。感谢 OpenClaw 社区提供开源的 Agent Loop、Session 与 Tool 基础。OpenClaw Agent Core 不是本项目的原创代码；Yuex 实现的是它上方的企业运行层。Driver 是明确边界，后续也可以替换为 Codex 或其他优秀的 Agent Harness。
 
 > 本仓库是从实际工程中复制出来的 Runtime 快照。部分 Go import、持久化接口和回调仍保留原系统边界，因此它目前适合阅读、拆分和二次集成，不是下载后即可独立启动的发行包。
 
 ## Architecture
 
-客服、内容创作、研究助手和企业自动化是四个彼此独立的产品示例。它们可以分别复用这套 Runtime 代码和 API，并不表示四个产品必须连接同一个在线实例。图中的虚线表示“可以采用这套代码”，实线才表示一次部署内的真实调用。
+客服、内容创作、研究助手和企业自动化是四个彼此独立的产品示例。它们都可以采用 Yuex，但各自保留自己的 Backend、数据库和 Runtime 部署。虚线表示“可以采用”，不是四个产品在网络上共用同一个实例。
 
 ```mermaid
 flowchart TB
-    subgraph PRODUCTS[四种独立产品，各自拥有 Frontend、Backend 和数据]
+    subgraph PRODUCTS[彼此独立的产品]
         direction LR
-        P1[客服 SaaS]
-        P2[内容创作 App]
-        P3[研究助手]
-        P4[企业自动化]
+        P1[客服 SaaS<br/>Frontend + Backend]
+        P2[内容创作 App<br/>Frontend + Backend]
+        P3[研究助手<br/>Frontend + Backend]
+        P4[企业自动化<br/>Frontend + Backend]
     end
 
-    P1 -. 可单独部署 .-> ENTRY
-    P2 -. 可单独部署 .-> ENTRY
-    P3 -. 可单独部署 .-> ENTRY
-    P4 -. 可单独部署 .-> ENTRY
+    P1 -. 可采用 .-> API
+    P2 -. 可采用 .-> API
+    P3 -. 可采用 .-> API
+    P4 -. 可采用 .-> API
 
-    subgraph DEPLOYMENT[一套 Yuex 部署，内部结构只展开一次]
-        direction TB
-        ENTRY[Backend Adapter / SDK]
+    subgraph YUEX[一套 Yuex 部署，主要结构]
         API[Runtime API v1<br/>capabilities · submit · status · events · abort]
+        CONTROL[Yuex Runtime<br/>Run · Scheduler · Lease/Fence<br/>Events · Recovery · Raw Usage]
+        HOST[Runtime Host<br/>Workspace · Tool Policy]
+        STORE[(Runtime Store)]
 
-        subgraph PREPARE[Planning and Input]
-            direction LR
-            ROUTER[Agent Profile Router<br/>Catalog · Skill Registry]
-            PLANNER[Capability Planner<br/>AgentRunPlan · Tool Policy]
-            COMPOSER[Workspace Composer<br/>Manifest · Attachments]
-        end
-
-        subgraph CONTROL[Runtime Control Plane]
-            direction LR
-            RUN[Run State Machine<br/>Idempotency]
-            QUEUE[Scheduler<br/>Queue · Capacity Reservation]
-            OWNER[Execution Ownership<br/>Host · Lease · Fence · RunTicket]
-            EVENT[Event and Recovery<br/>Cursor · Terminal · Raw Usage]
-            STORE[(Runtime Store<br/>Run · Lease · Event · Usage)]
-        end
-
-        subgraph HOST[Runtime Host / Go Adapter]
-            direction LR
-            ADMISSION[Host Admission<br/>Identity · Capabilities]
-            MATERIALIZE[Workspace Materializer<br/>Read-only Inputs]
-            POLICY[Tool Enforcement<br/>Allow-list · Budget · Audit]
-            DRIVER[Harness Driver]
-        end
-
-        ENTRY --> API --> ROUTER --> PLANNER --> COMPOSER --> RUN
-        RUN --> QUEUE --> OWNER --> ADMISSION
-        RUN --> EVENT --> STORE
-        OWNER --> STORE
-        ADMISSION --> MATERIALIZE --> POLICY --> DRIVER
+        API --> CONTROL --> HOST
+        CONTROL <--> STORE
     end
 
-    subgraph HARNESS[可替换的 Agent Harness]
-        direction LR
-        OVERLAY[Enterprise Overlay<br/>Private Run Context · Recovery]
-        OPENCLAW[OpenClaw Agent Core<br/>Model · Session · Tool Loop]
-        OTHER[Codex / Other Harness]
-        OVERLAY --> OPENCLAW
-        OVERLAY -. 更换 Driver .-> OTHER
-    end
-
-    DRIVER --> OVERLAY
-    OPENCLAW -->|ordered events · result · raw usage| EVENT
+    HOST --> DRIVER[Harness Driver]
+    DRIVER --> OPENCLAW[OpenClaw Agent Core<br/>Model · Session · Tool Loop]
+    DRIVER -. 可替换 .-> OTHER[Codex / Other Harness]
+    OPENCLAW -->|events · result · usage| CONTROL
 ```
 
-每个产品部署自己的 Backend 和数据库，也可以部署自己的 Yuex 实例。Yuex 的 Runtime Store 不是产品数据库：它保存 Run、队列、Lease、Fence、事件和原始 Usage，以便并发调度与故障恢复；产品中的团队、会员、会话、作品、价格和积分仍由 Backend 保存。
+一次请求进入 Runtime API 后，Yuex 负责排队、选择有空闲容量的 Runtime Host，并持续保存执行状态。Runtime Host 为任务准备独立 Workspace，再通过 Driver 调用 OpenClaw。执行事件、结果和原始用量回到 Yuex，最后由产品 Backend 写入自己的会话、作品和账单。
+
+并发能力来自可持久化队列、容量调度和多 Host 扩展；可靠性来自 Run 状态、Lease/Fence 和事件游标。它不是把所有请求串行塞进一个 Agent 进程，也不会让一个失联的旧 Host 在恢复后覆盖新结果。
 
 | 产品 Backend 负责 | Yuex 负责 | Harness 负责 |
 | --- | --- | --- |
