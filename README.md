@@ -10,33 +10,83 @@ Yuex 是 Agent 产品的生产运行层。产品 Backend 先确认用户身份�
 
 ## Architecture
 
-Yuex 是一套可以被不同产品采用的 Runtime 代码。本 README 按一个产品一套部署说明：一个产品 Backend 配一套属于该产品的 Yuex Runtime。
+下图同时表达两件事：上半部分列出可以采用 Yuex 的不同产品；下半部分展开一套 Yuex Runtime 的内部结构。
 
-客服 SaaS、内容创作、研究助手和企业自动化都可以采用这套代码，各自保留 Backend 并独立部署。这里复用的是 Runtime 代码和接入协议，不是共享同一个正在运行的服务实例。
-
-下面只画一个内容创作服务：
+**虚线表示复用同一套代码和接口，不是网络请求。实线表示一个产品部署内部的实际调用。**
 
 ```mermaid
 flowchart TB
-    subgraph Product[内容创作服务]
-        UI[Frontend] --> B[内容 Backend<br/>账号 / 权限 / 会员 / 素材 / 作品]
-        B --> A[Backend Adapter]
+    subgraph Products[独立产品示例：彼此并列，不互相调用]
+        direction LR
+        P1[客服 SaaS<br/>Frontend + 客服 Backend]
+        P2[内容创作 App<br/>Frontend + 内容 Backend]
+        P3[研究助手<br/>Frontend + 研究 Backend]
+        P4[企业自动化<br/>Frontend + 自动化 Backend]
     end
 
-    subgraph Yuex[该产品的 Yuex Runtime 部署]
-        A --> API[Runtime API<br/>capabilities / submit / status / events / abort]
-        API --> CP[Control Plane<br/>记录状态 / 排队 / 分配执行机器]
-        CP --> HOST[Runtime Host / Go Adapter<br/>准备本次任务目录]
-        HOST --> DRIVER[Harness Driver]
+    P1 -. 各自部署一套 .-> ENTRY
+    P2 -. 各自部署一套 .-> ENTRY
+    P3 -. 各自部署一套 .-> ENTRY
+    P4 -. 各自部署一套 .-> ENTRY
+
+    subgraph Yuex[Yuex Runtime 部署模板：每个产品各自一套，图中只展开一次]
+        direction TB
+
+        ENTRY[Backend Adapter / SDK]
+        API[Runtime API v1<br/>capabilities / submit / status / events / abort]
+
+        subgraph Planning[Planning & Input]
+            direction LR
+            CATALOG[Agent Profile Resolver<br/>L1 Router / Skill Registry]
+            PLAN[Capability Planner<br/>AgentRunPlan / Runtime Config]
+            WORKSPACE[Workspace Composer<br/>Manifest / Attachment / Prompt Compiler]
+        end
+
+        subgraph Control[Runtime Control Plane]
+            direction LR
+            RUN[Run Record / State Machine<br/>Idempotency / Session Admission]
+            SCHED[Scheduler / Capacity<br/>Reservation / Dispatch]
+            OWNER[Host Registry / Heartbeat<br/>Lease / Fence / RunTicket]
+            EVENTS[Event Ingestor / Run Recorder<br/>Recovery / Terminal Convergence / Usage]
+            STORE[(Runtime Store<br/>Run / Host / Lease / Event / Usage)]
+        end
+
+        subgraph Host[Runtime Host / Go Adapter]
+            direction LR
+            ADMISSION[mTLS Host Identity<br/>Capability Handshake / Admission]
+            MATERIAL[Workspace Materializer<br/>Mount Policy / Search Proxy]
+            POLICY[Signed Tool Policy<br/>Tool Audit / Budget / Abort]
+            GATEWAY[Gateway Client]
+        end
+
+        ENTRY --> API
+        API --> CATALOG --> PLAN --> WORKSPACE --> RUN
+        RUN --> SCHED --> OWNER --> ADMISSION
+        RUN --> EVENTS
+        RUN --> STORE
+        OWNER --> STORE
+        EVENTS --> STORE
+        ADMISSION --> MATERIAL --> POLICY --> GATEWAY
     end
 
-    DRIVER --> OC[OpenClaw Driver]
-    OC --> CORE[OpenClaw Agent Core]
-    DRIVER -. 可替换 .-> CX[Codex Driver]
-    DRIVER -. 可替换 .-> OTHER[其他 Harness Driver]
+    subgraph Harness[Agent Harness]
+        direction LR
+        DRIVER[OpenClaw Driver]
+        OVERLAY[Enterprise Overlay<br/>Run Registry / Private Context<br/>Capability / Recovery]
+        CORE[OpenClaw Agent Core<br/>Model / Session / Tool Loop]
+        CODEX[Codex 或其他 Harness Driver]
+
+        DRIVER --> OVERLAY --> CORE
+        DRIVER -. 可替换 .-> CODEX
+    end
+
+    GATEWAY --> DRIVER
+    CORE -->|events / result / raw usage| EVENTS
 ```
 
-将图中的“内容 Backend”换成客服、研究或其他产品的 Backend，就是另一套独立应用。Backend Adapter 保持相同的接入方式，产品数据和业务规则不需要搬进 Yuex。
+上面的四个产品是四种独立用法。实际部署客服 SaaS 时，客服 Backend 连接自己的 Yuex Runtime；部署内容创作服务时，内容 Backend 连接另一套 Yuex Runtime。下半部分只是把每套部署都相同的内部结构展开一次。
+
+Runtime Store 也属于各自的 Yuex 部署，用来保存 Run、Host、Lease、Event 和 Usage。产品账号、会员、素材和正式资产仍在各自 Backend 中。
 
 | 组件 | 保存和处理的内容 |
 | --- | --- |
