@@ -1,1034 +1,334 @@
-# Huahuo Enterprise Agent Runtime
-
-Huahuo Agent Runtime 的无改码抽取快照。
+# Yuex Agent Runtime
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 
-> 当前状态：`extraction snapshot`，不是可独立构建或部署的发行版。
->
-> 本次只把现有 Runtime 相关源码从 Huahuo 工程复制出来并按边界分区。复制的源码没有做包名、import、配置、协议或业务逻辑修改；没有执行测试、构建、启动或哈希校验。
+Yuex 是位于业务 Backend 与 Agent Harness 之间的生产 Runtime。业务系统负责用户、产品和数据；Runtime 负责 Run、并发、状态与恢复；Harness 负责模型推理和工具循环。
 
-## 1. 这次到底做了什么
+当前实现使用 [OpenClaw](https://github.com/openclaw/openclaw) 作为 Agent Core。感谢 OpenClaw 社区提供优秀的开源 Agent 框架、会话与工具基础。OpenClaw Core 不是本项目的原创代码；Yuex 的工作集中在它上方的 Runtime 控制面、并发治理、执行适配和业务接入边界。Harness Driver 是可替换层，也可以接入 Codex 或其他 Agent runtime。
 
-本目录完成的是第一次“剪脐带”：
+> 当前仓库是从 Huahuo 现有工程复制出的实现快照，用于理解架构和继续独立化。部分 Go import、持久化和回调仍引用原 Backend，因此它还不是开箱即用的独立发行版。
 
-1. 将 Runtime 控制面、Go Runtime Adapter 和 OpenClaw Driver/Overlay 从原工程复制到 `extracted/`。
-2. 将仍然属于 Huahuo Backend 的 Worker、公开 API、数据库、Workspace Search 和部署配置隔离到 `cut-boundary-reference/`。
-3. 不复制完整 Huahuo Backend，不复制 `.git`、缓存、构建产物、发布制品、日志、密钥或线上数据。
-4. 不把 OpenClaw Agent Core 冒充为本项目原创代码。OpenClaw Core 继续作为外部底座。
-5. 有意不在根目录创建 `go.mod`、启动命令或 Docker Compose，避免把尚未完成的逻辑解耦伪装成可运行产品。
-
-这里的“切断”是**目录和所有权边界切断**，不是代码已经完成解耦。原始 import 和 Backend 回调仍保留在快照中，方便下一阶段逐一替换。
-
-## 2. 目录结构
+## 一张图看懂
 
 ```text
-E:\Rungtime
-├── README.md
-├── extracted
-│   ├── go-runtime-control-plane
-│   │   └── internal/runtime
-│   │       ├── Run / Host / Session 模型
-│   │       ├── Scheduler / Capacity / Slot
-│   │       ├── Lease / Fencing
-│   │       ├── Recovery / Terminal Convergence
-│   │       ├── Runtime Event / Tool Audit
-│   │       └── Workspace Materialization / RunTicket
-│   ├── go-runtime-adapter
-│   │   └── cmd/openclaw-runtime-adapter
-│   │       ├── Runtime HTTP transport
-│   │       ├── Gateway client
-│   │       ├── Host registration / heartbeat
-│   │       ├── recovery bridge
-│   │       └── Workspace Search proxy
-│   └── openclaw-driver
-│       ├── overlay
-│       │   ├── enterprise Run registry/store
-│       │   ├── async Runtime methods
-│       │   ├── capability handshake
-│       │   ├── policy / recovery
-│       │   └── source tests
-│       └── tooling
-│           ├── Overlay installer
-│           ├── Runtime contract generator
-│           └── Runtime source validation tooling
-└── cut-boundary-reference
-    ├── backend-workers
-    │   ├── AI task dispatch
-    │   ├── Runtime event ingestion
-    │   ├── abort / recovery
-    │   ├── queue heartbeat
-    │   └── retention
-    ├── public-api
-    │   ├── routes
-    │   ├── domain
-    │   └── services
-    ├── storage
-    │   ├── persistence
-    │   └── migrations
-    ├── workspace-search
-    │   └── huahuo-context-tools
-    ├── deployment
-    │   ├── config
-    │   └── systemd
-    └── go-module
-        ├── go.mod
-        └── go.sum
+产品与业务
+Backend A ─┐
+Backend B ─┼── Host Adapter / SDK
+Backend C ─┤   身份、Workspace、Session、Agent 制品、结果回写
+Backend D ─┘
+                │
+                ▼
+Runtime API v1
+submit / status / events / abort / capabilities
+                │
+                ▼
+Yuex Runtime Control Plane
+Run Store / Scheduler / Capacity / Lease / Fencing
+Recovery / Event Store / Usage / Terminal Convergence
+                │
+                ▼
+Runtime Host / Go Adapter
+物化 Workspace / 验证 RunTicket / 执行工具策略 / 归一化事件
+                │
+                ▼
+Harness Driver
+├── OpenClaw Driver → 固定版本发行底座 → OpenClaw Agent Core（当前）
+├── Codex Driver    → Codex Runtime（可替换）
+└── Other Driver    → 其他 Harness（可替换）
 ```
 
-### 源码来源映射
+不同 Backend 不需要复制一套 Agent Core。它们实现自己的 Host Adapter，把业务对象转换成同一个 Runtime 契约；Runtime 以下的调度、恢复和 Harness 执行可以共用。
 
-| 新目录 | 原始目录 | 处理方式 |
-| --- | --- | --- |
-| `extracted/go-runtime-control-plane/internal/runtime` | `E:\huahuoai\backend\source\internal\runtime` | 整目录原样复制 |
-| `extracted/go-runtime-adapter/cmd/openclaw-runtime-adapter` | `E:\huahuoai\backend\source\cmd\openclaw-runtime-adapter` | 整目录原样复制 |
-| `extracted/openclaw-driver/overlay` | `E:\huahuoai\ops\source\openclaw-enterprise-runtime-overlay` | 整目录原样复制 |
-| `extracted/openclaw-driver/tooling` | `E:\huahuoai\ops\source\runtime` | 整目录原样复制 |
-| `cut-boundary-reference/backend-workers` | `E:\huahuoai\backend\source\internal\workers` | 只复制 Runtime、dispatch、heartbeat、retention 相关文件 |
-| `cut-boundary-reference/public-api` | Backend 的 Agent Run route/domain/service | 作为宿主 API 参考，不属于 Runtime 正式边界 |
-| `cut-boundary-reference/storage` | Backend persistence 与相关 migrations | 作为当前持久化事实参考 |
-| `cut-boundary-reference/workspace-search` | Ops 的 `huahuo-context-tools` | 当前仍回调 Huahuo Backend，故隔离 |
-| `cut-boundary-reference/deployment` | 当前 Runtime 配置与 systemd unit | 仅作现状参考，不能直接用于新服务 |
-| `cut-boundary-reference/go-module` | Backend 根 `go.mod/go.sum` | 仅保留原依赖版本，不作为本目录模块入口 |
+| 层 | 负责什么 |
+| --- | --- |
+| Backend A/B/C/D | 登录与租户、业务权限、Thread、Workspace、产品数据、计费规则和最终展示 |
+| Host Adapter / SDK | 把 Backend 的身份、文件、Session、Agent Release 和回写方式转换成 Runtime 契约 |
+| Runtime API v1 | 提供稳定的提交、查询、事件、取消和能力发现接口 |
+| Runtime Control Plane | 保存 Run 事实，排队和分配容量，维护 Lease/Fence，恢复异常执行并收敛终态 |
+| Runtime Host / Go Adapter | 验证短期授权，物化本次 Workspace，启动 Harness，转发事件和 Usage |
+| Harness Driver | 把通用 Runtime DTO 映射为某个 Harness 的会话、工具和取消协议 |
+| Agent Core | 执行模型循环、调用工具、维护原生会话并生成结果 |
 
-本快照来自 2026-09-02 的当前本地工作树。原 Backend 工作树当时已有用户未提交改动，本次没有清理、重置或覆盖它；复制出来的是当时磁盘上的当前内容，而不是回退后的旧提交内容。
+## Backend 要准备什么
 
-## 3. 对外应该怎样描述
+接入前，Backend 需要提供八类能力。它们可以使用自己的技术栈，不要求照搬 Huahuo 的表结构。
 
-建议口径：
+| 能力 | Backend 需要拥有的事实 |
+| --- | --- |
+| 身份与权限 | 稳定的 `tenantId`、`userId`、`workspaceId`，以及对本次输入和结果的访问授权 |
+| Thread 与 Session | 产品 `threadId`，以及由服务端维护的 Harness Session 映射，例如 `openclawSessionKey` |
+| Workspace Provider | Workspace 版本、上下文代次、允许读取的逻辑文件和短期对象读取引用 |
+| Agent Catalog | 当前生效的 Agent、Skill、Knowledge、Tool Policy 和 Runtime Config Release |
+| 模型配置 | 服务端保存的模型、Provider、Auth Pool、超时和输出预算；密钥不进入 Workspace |
+| 运行存储 | Run、Reservation、Lease、Event、Usage 和终态记录的持久化能力 |
+| 事件与结果回写 | 把 Runtime 事件投影给前端，把最终结果写入业务 Thread、Task 或资产 |
+| 服务间安全 | Backend、Control Plane 和 Runtime Host 之间的认证，生产环境建议使用 mTLS |
 
-> 基于 OpenClaw Agent Core，我们实现了面向生产并发的企业级 Agent Runtime 控制面，包括 Run 生命周期、调度、容量、Lease、Fencing、恢复、事件收敛、Usage 和多租户 Workspace 边界。
+数据库是部署依赖，不是交给 OpenClaw 的 Run 参数。Backend 数据库保存用户、Thread、Workspace 和产品结果；Runtime Store 保存 Run、调度、Lease、Event 和 Usage；Harness Session Store 保存原生会话。三者可以先共用一个物理数据库，但所有权和写入接口必须分开。
 
-不建议说“OpenClaw Agent Core 是我们从零自研的”。本项目的原创重点在 OpenClaw 之上的企业 Runtime Overlay、控制面、Adapter 和生产治理。
+### 每次 Run 的输入
 
-```text
-OpenClaw Agent Core                  上游执行内核
-openclaw-enterprise-runtime         固定版本的 Core 发行底座
-OpenClaw Driver / Overlay           企业协议和执行桥接
-Huahuo Runtime Control Plane        并发、状态、恢复与治理
-Host Adapter / SDK                  业务 Backend 接入边界
-Backend A / Backend B               各自产品、用户与业务数据
-```
-
-当前目录没有复制完整 OpenClaw Core。OpenClaw 继续由其官方独立仓库和原许可证维护：
-
-`https://github.com/openclaw/openclaw`
-
-本仓库是独立项目，不是 OpenClaw 的 Fork，也不代表 OpenClaw 官方。Huahuo 原创代码采用 `AGPL-3.0-only`；OpenClaw 及其他第三方代码仍适用各自许可证，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
-
-## License
-
-Copyright (c) 2026 Huahuo AI contributors.
-
-本仓库中由 Huahuo 创作的代码按 [GNU Affero General Public License v3.0 only](LICENSE) 发布。修改本项目并通过网络向用户提供服务时，必须依照 AGPL v3 第 13 条向这些用户提供相应源码。
-
-第三方组件不因本仓库采用 AGPL 而被重新许可。OpenClaw Agent Core 未包含在本仓库中；其许可证和署名见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
-
-## 4. 目标架构
-
-```mermaid
-flowchart TB
-    subgraph Clients[客户端]
-        Web[Web]
-        Mobile[iOS / Android]
-        Desktop[Desktop]
-    end
-
-    subgraph Products[业务服务]
-        BackendA[Backend A]
-        BackendB[Backend B]
-        AdapterA[Host Adapter A / Go SDK]
-        AdapterB[Host Adapter B / Go SDK]
-        BackendA --> AdapterA
-        BackendB --> AdapterB
-    end
-
-    subgraph RuntimePlatform[独立 Agent Runtime]
-        RuntimeAPI[Runtime API v1]
-        ControlPlane[Runtime Control Plane]
-        RunStore[Run / Event Store]
-        Scheduler[Scheduler / Capacity / Slot]
-        Safety[Lease / Fencing / Idempotency]
-        Recovery[Recovery / Terminal Convergence]
-        Usage[Usage Metering]
-
-        RuntimeAPI --> ControlPlane
-        ControlPlane --> RunStore
-        ControlPlane --> Scheduler
-        Scheduler --> Safety
-        ControlPlane --> Recovery
-        ControlPlane --> Usage
-    end
-
-    subgraph Execution[执行层]
-        Driver[OpenClaw Driver]
-        Distribution[openclaw-enterprise-runtime]
-        Core[OpenClaw Agent Core]
-        Driver --> Distribution --> Core
-    end
-
-    Web --> BackendA
-    Mobile --> BackendA
-    Desktop --> BackendB
-    AdapterA --> RuntimeAPI
-    AdapterB --> RuntimeAPI
-    ControlPlane --> Driver
-```
-
-### 每层职责
-
-| 层 | 负责 | 不负责 |
-| --- | --- | --- |
-| 前端 | 登录态、提交用户输入、展示进度、SSE 断线续传、取消按钮 | RunTicket、Host、Lease、Fence、模型密钥、真实 Workspace 路径 |
-| Backend A/B | 用户与租户鉴权、Workspace/Thread、业务对象、产品权限、结果展示、计费策略 | 执行模型循环、管理 OpenClaw 本地状态 |
-| Host Adapter / SDK | 将业务请求转成 Runtime contract；接收事件和结果回调 | 决定 Runtime 内部调度算法 |
-| Runtime API v1 | `submit/status/events/abort/capabilities` 的稳定服务契约 | 暴露业务数据库结构或 OpenClaw 私有协议给前端 |
-| Runtime Control Plane | Run、Scheduler、容量、Slot、Lease、Fence、恢复、事件、Usage | 获客、选题、人设等具体业务规则 |
-| OpenClaw Driver | Runtime DTO 与 OpenClaw Gateway 方法的转换、能力握手、错误归一化 | 用户身份和业务结果持久化 |
-| openclaw-enterprise-runtime | 固定并封装可验证的 OpenClaw 发行底座 | Huahuo 产品业务 |
-| OpenClaw Agent Core | Agent loop、模型调用、Tool 执行和会话能力 | 企业多租户控制面 |
-
-## 5. 当前代码的真实连接方式
-
-以下是抽取前的实际主链路，不是目标架构的理想化版本：
-
-```mermaid
-flowchart LR
-    FE[Frontend] --> API[Huahuo Public API]
-    API --> Service[AgentRunService]
-    Service --> PG[(Huahuo PostgreSQL)]
-    Service --> Queue[(Huahuo Queue / Redis)]
-    Queue --> Planning[Planning Worker]
-    Planning --> Dispatch[AITaskDispatcher]
-    Dispatch --> RuntimePkg[Backend internal/runtime]
-    RuntimePkg --> Adapter[Go Runtime Adapter]
-    Adapter --> Gateway[OpenClaw Gateway + Overlay]
-    Gateway --> Core[OpenClaw Core]
-
-    Adapter -->|register / heartbeat / recovery| InternalAPI[Huahuo Internal API]
-    Gateway --> SearchPlugin[huahuo-context-tools]
-    SearchPlugin --> SearchProxy[Adapter Search Proxy]
-    SearchProxy -->|workspace-search| InternalAPI
-
-    Gateway --> EventWorker[RuntimeEventWorker]
-    EventWorker --> PG
-    EventWorker --> Projector[Business Result Projector]
-    Projector --> PG
-    PG --> SSE[Public SSE]
-    SSE --> FE
-```
-
-### 已找到的脐带
-
-| 编号 | 当前连接 | 为什么仍是 Backend 依赖 | 后续替换目标 |
-| --- | --- | --- | --- |
-| C1 | Adapter 直接 import `huahuoai/backend/source/internal/runtime` | DTO、RunTicket、mTLS、Materializer 和恢复类型位于 Backend `internal` 包 | 独立 `contracts` 与 `runtime-sdk-go` 包 |
-| C2 | Scheduler import `internal/domain`、`internal/persistence`、`internal/queue` | 错误模型、PostgreSQL 事务和分布式锁属于 Huahuo 模块 | Runtime 自有 error/store/lease ports |
-| C3 | Adapter 调用 `/internal/v1/runtime-hosts/*` | Host 注册、心跳和恢复权威在 Huahuo Backend | Runtime 自有 Host Control API，或标准 Host callbacks |
-| C4 | Workspace Search 回调 `/internal/v1/runtime/workspace-search` | 索引和 Workspace 权限在 Huahuo Backend | `WorkspaceSearchProvider` Host Adapter |
-| C5 | `AITaskDispatcher` 组装 Huahuo Plan/Workspace/业务上下文 | 通用调度与产品业务混在同一 Worker | Backend 负责组装，Runtime 只接收标准 RunSpec |
-| C6 | `RuntimeEventWorker` 同时摄取事件和写回业务结果 | Runtime 终态与业务投影不是同一所有权 | Runtime 先完成标准终态，再调用 `ResultSink` |
-| C7 | Terminal converger 直接更新 `agent_runs`、plan、queue、usage | Runtime 状态机绑定 Huahuo 表结构 | Runtime Event Store + Host Result/Usage callbacks |
-| C8 | Runtime config 使用 Huahuo 路径、Profile、Plugin 和 Prompt | 配置不能直接复用到 Backend B | 通用配置 schema + 每个 Host 的独立配置 |
-| C9 | systemd unit 绑定当前 Huahuo 服务器目录 | 它是部署现状，不是可移植发行物 | 独立容器或 Runtime 自有稳定 unit |
-
-## 6. 本次切断后的状态
-
-```mermaid
-flowchart LR
-    subgraph Extracted[extracted：候选 Runtime 所有权]
-        CP[Go Control Plane Snapshot]
-        GA[Go Adapter Snapshot]
-        OD[OpenClaw Driver / Overlay Snapshot]
-        CP --> GA --> OD
-    end
-
-    subgraph Quarantine[cut-boundary-reference：已隔离的旧连接]
-        BW[Backend Workers]
-        PA[Public API]
-        DB[Persistence / Migrations]
-        WS[Workspace Search Bridge]
-        DEP[Huahuo Deployment Config]
-    end
-
-    CP -. unresolved imports .-> DB
-    GA -. host callbacks .-> BW
-    GA -. registration / search .-> PA
-    OD -. workspace search .-> WS
-    GA -. current environment .-> DEP
-```
-
-已经切断的是：
-
-- 新目录不再包含完整 Huahuo Backend。
-- Backend Worker、公开 API、数据库和部署连接点不再混在 Runtime 候选源码目录中。
-- OpenClaw Core 不被复制进本项目，也不改变其上游历史。
-- 没有根模块和启动入口，因此不会意外把这份快照部署成服务。
-
-尚未切断的是：
-
-- Go import 仍指向 `huahuoai/backend/source/internal/...`。
-- Adapter 的生产启动仍要求 Huahuo Host registration、mTLS 和 recovery 配置。
-- Scheduler、Event Worker、Terminal Converger 仍理解 Huahuo 数据表和队列。
-- Workspace Search Plugin 仍通过 Adapter 回调 Huahuo Backend。
-- 当前配置仍包含 Huahuo 的路径、Profile 和产品 Prompt。
-
-因此当前快照**预期不能独立编译或启动**。这是本次“不改任何代码”的直接结果，不是遗漏。
-
-## 7. Backend A 和 Backend B 怎样共用 Runtime
-
-两个 Backend 不应该覆盖或复制 Runtime。它们各自实现 Host Adapter，然后调用同一套 Runtime API。
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant UA as User A
-    participant BA as Backend A
-    participant HA as Host Adapter A
-    participant RT as Runtime API
-    participant CP as Control Plane
-    participant OC as OpenClaw Driver
-    participant SA as Result Sink A
-
-    UA->>BA: 提交产品请求
-    BA->>BA: 鉴权、Workspace、业务权限、幂等
-    BA->>HA: 标准化 HostRunRequest
-    HA->>RT: submit(RunSpec)
-    RT->>CP: 建立 Run + 调度 + 租约
-    CP->>OC: 执行冻结后的 RunSpec
-    OC-->>CP: durable events / usage / terminal
-    CP-->>HA: events / terminal result
-    HA->>SA: 写回 Backend A 的业务对象
-    BA-->>UA: SSE / 状态 / 最终结果
-```
-
-Backend B 走相同流程，只替换：
-
-- `IdentityProvider`：如何解析 tenant/user。
-- `WorkspaceProvider`：如何提供只读/可写 Workspace 快照。
-- `PolicyProvider`：允许哪些 Agent、Skill、Tool、模型和预算。
-- `SearchProvider`：如何检索 Backend B 的知识数据。
-- `UsageSink`：如何预留、结算和展示用量。
-- `ResultSink`：如何写回 Backend B 的消息和业务对象。
-
-Runtime 不应该知道“获客、选题、人设、视频分析”等产品词；这些都留在具体 Backend 和 Agent Package 中。
-
-## 8. 前端到底调用谁
-
-结论：**前端只调用自己的 Backend，不直接调用 Runtime Adapter、OpenClaw Gateway 或 OpenClaw Core。**
-
-```mermaid
-flowchart LR
-    Browser[Frontend] -->|Bearer token| PublicAPI[Backend Public API]
-    PublicAPI -->|service identity / SDK| RuntimeAPI[Runtime API]
-    RuntimeAPI -->|RunTicket + mTLS| Adapter[Runtime Adapter]
-    Adapter -->|Gateway credential| OpenClaw[OpenClaw Gateway]
-
-    Browser -. 禁止 .-> RuntimeAPI
-    Browser -. 禁止 .-> Adapter
-    Browser -. 禁止 .-> OpenClaw
-```
-
-浏览器不能获得或提交以下字段：
-
-- `tenantId`、`userId` 的可信值；它们来自登录态。
-- `runtimeHostId`、`reservationId`、`fencingToken`。
-- `RunTicket`、JTI、mTLS 证书、Gateway token。
-- `runtimeConfigId`、Provider、模型密钥、Tool allowlist。
-- Workspace 真实路径、对象存储签名地址、内部 Session key。
-
-### 8.1 前端基础配置
-
-```ts
-export const API_BASE_URL = `${deploymentOrigin}/api/v1`;
-
-export function apiHeaders(accessToken: string, requestId: string) {
-  return {
-    Accept: "application/json",
-    Authorization: `Bearer ${accessToken}`,
-    "X-Request-Id": requestId,
-    "X-Trace-Id": requestId,
-  };
-}
-```
-
-不要在正式客户端硬编码服务器 IP，也不要重复拼接 `/api/v1`。有 JSON body 的请求增加：
-
-```text
-Content-Type: application/json; charset=utf-8
-```
-
-所有创建、确认、取消等 mutation 使用新的 `X-Idempotency-Key`。同一次网络重试使用同一个 key 和完全相同的 body；用户主动发起新任务时生成新 key。
-
-### 8.2 推荐的产品提交方式
-
-产品聊天优先走 Backend 的 Chat API，而不是直接把 Runtime DTO 暴露给前端：
-
-```http
-POST /api/v1/chat/threads/{threadId}/messages
-Authorization: Bearer <access-token>
-X-Request-Id: <request-id>
-X-Idempotency-Key: <idempotency-key>
-Content-Type: application/json; charset=utf-8
-```
+前端只向自己的 Backend 提交产品语义：
 
 ```json
 {
-  "agentProfileId": "agent_profile_from_catalog",
-  "skillProfileIds": ["optional_skill_profile_from_catalog"],
+  "workspaceId": "workspace-id",
+  "threadId": "thread-id",
+  "agentProfileId": "agent-profile-from-catalog",
+  "skillProfileIds": ["skill-profile-from-catalog"],
+  "modelProfileId": "optional-catalog-model",
   "input": {
     "content": [
-      {
-        "type": "text",
-        "text": "请整理今天最重要的三件事"
-      }
+      {"type": "text", "text": "用户请求"},
+      {"type": "file", "resourceId": "authorized-resource-id"}
     ]
   }
 }
 ```
 
-典型接受响应：
+Backend 完成鉴权、选择和冻结后，才向 Runtime 提交执行事实：
 
-```json
-{
-  "success": true,
-  "data": {
-    "userMessage": {},
-    "run": {
-      "agentRunId": "run_opaque_id",
-      "status": "planning"
-    },
-    "nextAction": {
-      "type": "poll_agent_run",
-      "agentRunId": "run_opaque_id",
-      "afterSequence": 0
-    }
-  }
-}
-```
-
-HTTP `202 Accepted` 只代表任务已持久化接收，不代表 Agent 已经成功完成。
-
-当前 Huahuo Backend 还保留这些公开 Run 路由作为参考：
-
-| 方法 | 路径 | 前端用途 |
-| --- | --- | --- |
-| `POST` | `/api/v1/agent/runs` | 直接创建 Run facade；具体请求形状由宿主 Backend 的公开合同决定 |
-| `GET` | `/api/v1/agent/runs/{agentRunId}` | 查询公开 Run 状态和终态结果 |
-| `GET` | `/api/v1/agent/runs/{agentRunId}/events` | 增量拉取公开事件 |
-| `GET` | `/api/v1/agent/runs/{agentRunId}/events/stream` | SSE 实时事件流 |
-| `POST` | `/api/v1/agent/runs/{agentRunId}/confirm` | 确认需要审批的 Plan |
-| `POST` | `/api/v1/agent/runs/{agentRunId}/cancel` | 用户取消，不是删除 |
-
-### 8.3 前端如何检查状态
-
-优先顺序：
-
-```text
-提交成功
-  -> 打开 SSE
-  -> 按 sequence 更新 UI
-  -> 收到 terminal
-  -> GET Run 做最终读回
-  -> 成功时刷新 Thread，确认 Assistant 消息已经持久化
-
-SSE 不可用
-  -> GET events 增量轮询
-  -> 必要时 GET Run 状态轮询
-  -> 终态停止
-```
-
-查询 Run：
-
-```http
-GET /api/v1/agent/runs/{agentRunId}
-Authorization: Bearer <access-token>
-X-Request-Id: <request-id>
-```
-
-公开状态只有以下集合：
-
-| 状态 | 含义 | 前端动作 |
-| --- | --- | --- |
-| `resolving` | 正在解析意图 | 展示处理中，继续监听 |
-| `planning` | 正在规划 | 展示处理中，继续监听 |
-| `awaiting_confirmation` | 等待用户确认 Plan | 展示确认操作 |
-| `queued` | 已完成规划，等待 Runtime 容量 | 展示排队中，继续监听 |
-| `running` | Runtime 正在执行 | 展示运行中和 draft |
-| `aborting` | 已收到取消请求，正在收敛 | 禁用重复取消，继续监听 |
-| `succeeded` | Runtime 和业务写回均成功 | 读取结果并刷新 Thread |
-| `failed` | 安全终态失败 | 展示可公开错误，根据 `retryable` 决定重试 |
-| `timeout` | 超时终态 | 停止监听，允许用户发起新 Run |
-| `cancelled` | 取消终态 | 停止监听 |
-
-终态集合固定为：
-
-```ts
-const TERMINAL_RUN_STATES = new Set([
-  "succeeded",
-  "failed",
-  "timeout",
-  "cancelled",
-]);
-```
-
-前端不需要查询 OpenClaw 的 `accepted/materializing/finalizing/orphaned` 等内部状态。Backend 会把它们投影成稳定的公开状态。
-
-### 8.4 SSE 调用
-
-```http
-GET /api/v1/agent/runs/{agentRunId}/events/stream
-Authorization: Bearer <access-token>
-Accept: text/event-stream
-Last-Event-ID: <last-sequence>
-```
-
-浏览器原生 `EventSource` 不能可靠设置 `Authorization` header。当前 Bearer 鉴权接口应使用支持流式 body 的 `fetch`，或者由同源 BFF 使用安全 Cookie 代理；不要把 access token 放进 URL。
-
-下面是最小的 Bearer SSE 读取骨架：
-
-```ts
-type RunEvent = {
-  sequence: number;
-  eventType: string;
-  status: string;
-  data?: Record<string, unknown>;
-  createdAt: string;
-};
-
-export async function watchRun(
-  runId: string,
-  accessToken: string,
-  afterSequence: number,
-  onEvent: (name: string, event: RunEvent) => void,
-  signal?: AbortSignal,
-) {
-  const headers: Record<string, string> = {
-    Accept: "text/event-stream",
-    Authorization: `Bearer ${accessToken}`,
-  };
-  if (afterSequence > 0) {
-    headers["Last-Event-ID"] = String(afterSequence);
-  }
-
-  const response = await fetch(
-    `${API_BASE_URL}/agent/runs/${encodeURIComponent(runId)}/events/stream`,
-    { headers, signal },
-  );
-  if (!response.ok || !response.body) {
-    throw new Error(`agent_run_stream_failed:${response.status}`);
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  while (true) {
-    const { done, value } = await reader.read();
-    buffer += decoder.decode(value, { stream: !done }).replaceAll("\r\n", "\n");
-
-    let boundary: number;
-    while ((boundary = buffer.indexOf("\n\n")) >= 0) {
-      const frame = buffer.slice(0, boundary);
-      buffer = buffer.slice(boundary + 2);
-      if (!frame || frame.startsWith(":")) continue;
-
-      let id = "";
-      let name = "message";
-      const data: string[] = [];
-      for (const line of frame.split("\n")) {
-        if (line.startsWith("id:")) id = line.slice(3).trim();
-        else if (line.startsWith("event:")) name = line.slice(6).trim();
-        else if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
-      }
-      if (!data.length) continue;
-
-      const event = JSON.parse(data.join("\n")) as RunEvent;
-      onEvent(name, event);
-      if (id) afterSequence = Number(id);
-      if (name === "terminal") return afterSequence;
-    }
-
-    if (done) return afterSequence;
-  }
-}
-```
-
-事件格式：
-
-```text
-id: 18
-event: draft_delta
-data: {"sequence":18,"eventType":"draft_delta","status":"running","data":{"deltaText":"...","replace":false}}
-```
-
-处理规则：
-
-- `id` 就是持久化事件 `sequence`，每处理成功一条再更新本地 cursor。
-- `draft_delta.data.deltaText` 是可展示草稿；`replace=true` 时替换当前草稿，否则追加。
-- `event: terminal` 后关闭流，再查询一次 Run 和 Thread。
-- `: heartbeat` 是注释帧，只用于保活，不更新 cursor。
-- 断线后使用 `Last-Event-ID` 恢复。不要同时发送不同值的 query `afterSequence` 和 `Last-Event-ID`。
-- `RUNTIME_EVENT_GAP` 表示旧事件已超出保留窗口；使用服务端给出的 `resumeAfterSequence` 重新拉取事件页和 Run 当前状态。
-- `RUNTIME_CAPACITY_UNAVAILABLE` 表示 SSE admission 暂不可用；按 `Retry-After` 退避，同时降级到轮询。
-
-### 8.5 事件轮询 fallback
-
-```http
-GET /api/v1/agent/runs/{agentRunId}/events?afterSequence=18&limit=100
-Authorization: Bearer <access-token>
-```
-
-典型响应：
-
-```json
-{
-  "success": true,
-  "data": {
-    "items": [],
-    "nextAfterSequence": 18,
-    "hasMore": false,
-    "oldestAvailableSequence": 1,
-    "latestSequence": 18,
-    "terminalSequence": null,
-    "gap": false
-  }
-}
-```
-
-轮询间隔优先读取 `GET /api/v1/app/config` 的 `polling.aiTaskMs`。没有配置时可暂用约 3 秒；页面回到前台后立即读一次服务端状态，不只相信本地 pending 状态。
-
-### 8.6 取消与确认
-
-取消：
-
-```http
-POST /api/v1/agent/runs/{agentRunId}/cancel
-Authorization: Bearer <access-token>
-X-Request-Id: <request-id>
-X-Idempotency-Key: <idempotency-key>
-Content-Type: application/json; charset=utf-8
-
-{"reason":"user_cancelled"}
-```
-
-取消不是删除。收到 `202` 后继续监听，直到 `cancelled` 或另一个终态。
-
-确认 Plan：
-
-```http
-POST /api/v1/agent/runs/{agentRunId}/confirm
-Authorization: Bearer <access-token>
-X-Idempotency-Key: <idempotency-key>
-Content-Type: application/json; charset=utf-8
-
-{"expectedPlanVersion":3,"decision":"approve"}
-```
-
-只有 `awaiting_confirmation` 可以确认。客户端不能修改服务端冻结的 Plan 内容。
-
-## 9. Runtime API：只给 Backend / SDK 调用
-
-当前 Go Adapter 已有一套内部异步 HTTP 面。它可以作为 Runtime API v1 的实现参考，但**不是浏览器 API**。
-
-| 方法 | 当前路径 | 作用 |
-| --- | --- | --- |
-| `POST` | `/enterprise.runtime/runs` | 提交冻结后的 RunSpec |
-| `GET` | `/enterprise.runtime/runs/{runId}` | 查询 Runtime 内部状态 |
-| `GET` | `/enterprise.runtime/runs/{runId}/events` | 按 sequence 增量读取；支持 `waitMs` 长轮询 |
-| `POST` | `/enterprise.runtime/runs/{runId}/abort` | 使用 reservation + fencing 发起中止 |
-| `GET` | `/enterprise.runtime/capabilities` | 读取 Runtime/Tool 能力握手 |
-
-旧的 `/enterprise.runtime.run` 在 production-like 环境会返回 `410 RUNTIME_LEGACY_CONTRACT_DISABLED`，新接入不得使用。
-
-### 9.1 内部鉴权
-
-生产链路至少包含：
-
-```text
-mTLS Runtime Host identity
-Authorization: RunTicket <short-lived-signed-ticket>
-X-Runtime-Host-Id: <scheduled-host-id>
-```
-
-Submit 还可以由控制面发送冻结后的预算 header：
-
-```text
-X-Huahuo-Runtime-Timeout-Sec: <bounded-seconds>
-X-Huahuo-Runtime-Max-Tool-Calls: <bounded-count>
-```
-
-这些 header 名称是当前快照事实，后续独立 API 可以在兼容层保留，再逐步改为中性名称。RunTicket 不进入 JSON，不进入日志，也不返回前端。
-
-### 9.2 Submit
-
-```http
-POST /enterprise.runtime/runs
-Authorization: RunTicket <signed-ticket>
-X-Runtime-Host-Id: runtime-host-01
-Content-Type: application/json
-```
-
-当前请求的顶层结构：
-
-```json
-{
-  "runId": "run_opaque_id",
-  "reservationId": "reservation_opaque_id",
-  "fencingToken": 7,
-  "capabilityHash": "capability_identity",
-  "inputMessage": "short current user turn",
-  "runtimeConfigId": "runtime-config-id",
-  "runtimeConfigVersion": "v1",
-  "inputManifest": {
-    "schemaVersion": "runtime-input-manifest-version",
-    "runId": "run_opaque_id",
-    "runtimeHostId": "runtime-host-01",
-    "tenantId": "server-derived-tenant",
-    "userId": "server-derived-user",
-    "workspaceId": "server-derived-workspace",
-    "workspaceVersion": 1,
-    "threadWorkspaceBindingVersion": 1,
-    "contextGeneration": 1,
-    "metaRelease": "frozen-meta-release",
-    "agentProfile": "internal-agent-profile",
-    "skillProfiles": [],
-    "capabilityHash": "capability_identity",
-    "files": [],
-    "manifestHash": "server-generated-identity",
-    "expiresAt": "2026-09-02T12:00:00Z"
-  },
-  "plan": {
-    "agentRunId": "run_opaque_id",
-    "planVersion": 1
-  },
-  "productSessionRef": {}
-}
-```
-
-这不是前端可手写的请求。`reservationId`、Fence、Manifest、Plan 和 Ticket 必须由 Scheduler/Host Adapter 从已持久化事实生成。
-
-成功响应：
-
-```json
-{
-  "runId": "run_opaque_id",
-  "status": "accepted",
-  "runtimeRequestId": "runtime_request_opaque_id",
-  "acceptedSequence": 1
-}
-```
-
-### 9.3 Status 与 Events
-
-```http
-GET /enterprise.runtime/runs/{runId}
-Authorization: RunTicket <signed-ticket>
-X-Runtime-Host-Id: runtime-host-01
-```
-
-```json
-{
-  "runId": "run_opaque_id",
-  "status": "running",
-  "runtimeRequestId": "runtime_request_opaque_id",
-  "lastEventSequence": 12,
-  "result": null,
-  "error": null,
-  "usage": {}
-}
-```
-
-```http
-GET /enterprise.runtime/runs/{runId}/events?afterSequence=12&limit=100&waitMs=25000
-Authorization: RunTicket <signed-ticket>
-X-Runtime-Host-Id: runtime-host-01
-```
-
-`limit` 当前必须在 `1..500`，`waitMs` 必须在 `0..25000`。这是 Backend Runtime Event Worker 的内部长轮询接口；前端使用公开 SSE，不直接轮询它。
-
-### 9.4 Abort
-
-```http
-POST /enterprise.runtime/runs/{runId}/abort
-Authorization: RunTicket <signed-ticket>
-X-Runtime-Host-Id: runtime-host-01
-Content-Type: application/json
-
-{
-  "runId": "run_opaque_id",
-  "reservationId": "reservation_opaque_id",
-  "fencingToken": 7,
-  "reason": "USER_CANCELLED"
-}
-```
-
-旧 attempt 的 fencing token 必须被拒绝，防止迟到的取消或终态污染新 attempt。
-
-### 9.5 Capabilities
-
-```http
-GET /enterprise.runtime/capabilities
-X-Runtime-Host-Id: runtime-host-01
-```
-
-能力握手用于 Scheduler/Host registration 校验 Runtime 版本、Tool schema、预算和中止能力。它不提供给前端做功能开关。
-
-## 10. 为什么前端不用不停查 OpenClaw 状态
-
-事件路径是分层的：
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant OC as OpenClaw Core
-    participant OV as Runtime Overlay
-    participant AD as Go Adapter
-    participant EW as Runtime Event Worker
-    participant DB as Event Store
-    participant API as Backend SSE API
-    participant FE as Frontend
-
-    OC-->>OV: assistant/tool/lifecycle event
-    OV->>OV: normalize + persist sequence
-    AD->>OV: events(afterSequence, waitMs)
-    OV-->>AD: durable event page
-    AD-->>EW: normalized Runtime events
-    EW->>DB: idempotent append + cursor advance
-    DB-->>API: subscriber notification
-    API-->>FE: SSE draft_delta / lifecycle / terminal
-```
-
-因此：
-
-- Adapter/Worker 检查 OpenClaw Runtime 状态。
-- Backend 保存公开事件和最终业务结果。
-- 前端只监听 Backend SSE；断线时按公开 cursor 恢复。
-- 前端在终态后再读一次 Run 和 Thread，不能用草稿或日志替代持久化结果。
-
-## 11. 状态机与映射
-
-### 11.1 前端公开状态机
-
-```mermaid
-stateDiagram-v2
-    [*] --> resolving
-    resolving --> planning
-    planning --> awaiting_confirmation: confirmation required
-    awaiting_confirmation --> queued: approved
-    planning --> queued: no confirmation
-    queued --> running: capacity admitted
-    running --> aborting: cancel requested
-    queued --> cancelled: cancel before execution
-    aborting --> cancelled: abort converged
-    running --> succeeded: execution + writeback committed
-    running --> failed
-    running --> timeout
-    resolving --> failed
-    planning --> failed
-    queued --> failed
-    succeeded --> [*]
-    failed --> [*]
-    timeout --> [*]
-    cancelled --> [*]
-```
-
-### 11.2 Runtime 内部状态到公开状态
-
-| Runtime/内部状态 | 公开状态 |
+| 分组 | 主要字段 |
 | --- | --- |
-| `created`、`resolving_intent`、`resolving` | `resolving` |
-| `planning` | `planning` |
-| `awaiting_confirmation` | `awaiting_confirmation` |
-| `admission_pending`、`queued` | `queued` |
-| `reserving`、`dispatched`、`accepted`、`materializing`、`running`、`finalizing` | `running` |
-| `aborting` | `aborting` |
-| `succeeded` | `succeeded` |
-| `cancelled`、`aborted` | `cancelled` |
-| `timeout` | `timeout` |
-| `failed`、`orphaned` | `failed` |
+| Run 身份 | `runId`、`tenantId`、`userId`、`workspaceId`、`threadId` |
+| Session | 服务端生成或读取的 Harness Session Key；不能由前端伪造 |
+| Workspace | `workspaceVersion`、`contextGeneration`、逻辑文件清单、附件身份和短期对象引用 |
+| 冻结计划 | Agent Release、Skill Releases、Knowledge Refs、Required Tools、Output Contract、Tool Budget |
+| Runtime 配置 | `runtimeConfigId` 和不可变版本；模型与 Auth Pool 由服务端解析 |
+| 并发授权 | `reservationId`、递增的 `fencingToken`、`capabilityHash` 和短期 `RunTicket` |
+| 本次输入 | `inputMessage` 和经过授权、限量、可验证的附件 |
+| 回写引用 | `productSessionRef`、结果解析身份和 Backend 自己保存的业务关联 |
 
-内部状态可以演进，前端公开状态集合必须保持稳定。未知内部状态不能直接泄漏给客户端。
+`RunTicket` 会绑定 Run、Tenant、Workspace、Host、Reservation、Manifest、Plan、Fence、过期时间和防重放身份。Runtime Host 必须验证它，但前端和模型都不应看到它。
 
-## 12. Lease、Fence 和恢复为什么必须留在 Runtime
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant CP as Control Plane
-    participant DB as Runtime Store
-    participant SCH as Scheduler
-    participant HOST as Runtime Host
-    participant REC as Recovery Worker
-
-    CP->>DB: reserve capacity for run
-    CP->>SCH: schedule(run, capability, scope)
-    SCH->>DB: acquire run lease
-    DB-->>SCH: lease + fencingToken=7
-    SCH->>DB: reserve Host slot
-    SCH->>HOST: submit(run, reservation, fence=7)
-    HOST-->>DB: accepted / events / heartbeat
-
-    HOST--xDB: heartbeat stops
-    REC->>DB: claim expired lease with newer fence
-    DB-->>REC: recovery ownership, fence=8
-    REC->>HOST: status / recover / orphan decision
-    HOST-->>REC: durable state
-    REC->>DB: converge one authoritative terminal result
-
-    Note over DB: Any late write carrying fence=7 is rejected
-```
-
-关键不变量：
-
-- 一个 Run attempt 只能有一个有效 owner。
-- Lease 到期不等于旧 owner 可以继续写。
-- 每次重新取得所有权都增加 fencing token。
-- terminal、usage、queue acknowledgement 和 slot release 必须幂等。
-- Gateway 重启后 SQLite 可以保留 Run/Event，但不能凭空恢复正在运行的模型循环。
-- 无法证明安全续跑时进入 `orphaned`，由控制面授权新 attempt，而不是重复消费旧 Ticket。
-
-## 13. 数据所有权
-
-| 数据 | 权威所有者 | Runtime 可见范围 |
-| --- | --- | --- |
-| 用户、租户、Membership | Backend A/B | 只接收服务端派生的不可变执行身份 |
-| Thread、消息、业务对象 | Backend A/B | 只接收 RunSpec；通过 ResultSink 请求写回 |
-| Workspace 当前版本 | Backend A/B | 使用冻结快照和受限读写能力 |
-| Run 调度、Host、Slot、Lease、Fence | Runtime Control Plane | 完整权威 |
-| Runtime 原始事件 | Runtime Event Store | 完整权威，但只投影安全字段给 Backend |
-| 前端公开事件 | Backend public event projection | 不含 Ticket、路径、Provider、Tool 私有 payload |
-| Provider credential | Secret/Provider 管理层 | Runtime 只使用引用，不返回原值 |
-| Usage execution facts | Runtime | 产生不可变 usage facts |
-| Credit/套餐/账务 | Backend A/B | 根据 usage facts 完成业务结算 |
-| 最终 Assistant 消息 | Backend A/B | Runtime 提供结果，Backend 持久化后才算产品成功 |
-
-## 14. 错误处理
-
-内部 Runtime 当前可见的主要安全错误包括：
-
-| 错误码 | 含义 | 默认处理 |
-| --- | --- | --- |
-| `RUNTIME_INPUT_INVALID` | DTO、Manifest、Plan、预算或绑定无效 | 不重试原请求；修正 Host Adapter |
-| `RUNTIME_PERMISSION_DENIED` | Ticket、Run、Workspace 或操作不匹配 | 不降级绕过权限 |
-| `RUNTIME_HOST_UNAUTHORIZED` | Host/mTLS 身份无效 | 隔离 Host，重新注册 |
-| `RUNTIME_CAPACITY_UNAVAILABLE` | Slot、并发或 admission 暂不可用 | 有界退避，保留同一 Run |
-| `RUNTIME_STORAGE_UNAVAILABLE` | 持久化/JTI/Event Store 不可用 | fail closed，不以内存成功替代 |
-| `RUNTIME_RUN_NOT_FOUND` | Run 不存在或不可见 | 由恢复逻辑核对，不由前端猜 ID |
-| `RUNTIME_EVENT_GAP` | cursor 早于最老保留事件 | 按服务端 resume cursor 重建公开视图 |
-| `RUNTIME_TIMEOUT` | 执行超时 | 终态收敛并释放资源 |
-| `RUNTIME_RUN_STALLED` | 无进展或失联 | Recovery 决策，不盲目重复执行 |
-| `RUNTIME_ABORT_FAILED` | 中止请求未安全确认 | 保持 `aborting`/恢复流程，不伪造取消成功 |
-| `PROVIDER_CONFIG_MISSING` | Provider 配置缺失 | 运维修复，不让前端选择密钥 |
-| `PROVIDER_AUTH_FAILED` | Provider 鉴权失败 | 隔离对应 credential/pool |
-| `RUNTIME_TOOL_BUDGET_EXCEEDED` | Tool 调用预算耗尽 | 安全终止并记录 Usage |
-
-前端只消费 Backend 注册过的公开错误结构，例如：
-
-```json
-{
-  "success": false,
-  "error": {
-    "code": "RUNTIME_CAPACITY_UNAVAILABLE",
-    "message": "safe user-facing message",
-    "retryable": true,
-    "traceId": "public-trace-id"
-  }
-}
-```
-
-不要把 Runtime stderr、Provider 原始响应、绝对路径、Prompt、Token 或 Tool payload 原样展示给用户。
-
-## 15. 下一阶段需要补的接口
-
-这些是下一阶段的新代码目标，本次没有实现：
-
-```go
-type RunStore interface {
-    CreateRun(...)
-    GetRun(...)
-    CompareAndSetState(...)
-}
-
-type EventStore interface {
-    Append(...)
-    ListAfter(...)
-    Subscribe(...)
-}
-
-type LeaseStore interface {
-    Acquire(...)
-    Renew(...)
-    Release(...)
-}
-
-type HostAdapter interface {
-    ResolveIdentity(...)
-    ResolveWorkspace(...)
-    SearchWorkspace(...)
-    ReserveUsage(...)
-    CommitUsage(...)
-    CommitResult(...)
-}
-```
-
-实际落地顺序应保持最小：
+## 一次 Run 怎样完成
 
 ```text
-1. 独立 contracts：移出 DTO、状态和错误码
-2. Runtime store ports：替换 domain/persistence/queue import
-3. PostgreSQL 实现：迁入通用 Run/Host/Lease/Event 表
-4. Host Adapter：先接回 Huahuo Backend A
-5. Go SDK：让 Backend B 使用同一 Runtime API
-6. Standalone server：最后再补启动、配置和容器
+1. Backend 鉴权并固定 Workspace / Thread
+2. TaskIntent 在生效 Catalog 中选择 Agent Profile
+3. SkillRegistry 过滤可用、已授权的候选 Skill
+4. Backend 冻结 AgentRunPlan 与 RuntimeInputManifest
+5. Scheduler 选择具备所需能力和空闲 Slot 的 Runtime Host
+6. Reservation + Lease + FencingToken 建立唯一执行所有者
+7. Runtime Host 物化只属于本次 Run 的 Workspace
+8. Harness Driver 调用 OpenClaw、Codex 或其他 Agent Core
+9. 事件按序写入 Event Store，Backend 通过 cursor 消费
+10. 终态收敛后写回 Assistant、业务结果与 Usage，并释放容量
 ```
 
-不应先重写 Scheduler、Lease 或 Fencing 算法。先把已验证逻辑放到新接口后面，再逐步迁移所有权。
+前端永远只调用 Backend。它从 Backend 获取公开状态和 SSE/事件流，不轮询 OpenClaw，也不持有 Runtime 凭据、真实 Workspace 路径、RunTicket、Lease 或 FencingToken。
 
-## 16. Standalone 与 Managed 模式
+Runtime API 面向 Backend/SDK 的最小操作是：
 
-未来可以支持两种运行方式：
+| 操作 | 用途 |
+| --- | --- |
+| `capabilities` | Host 启动和调度前确认 Runtime 版本、工具、策略与取消能力 |
+| `submit` | 幂等提交一个已经冻结并取得 Reservation 的 Run |
+| `status` | 对账当前状态、最后事件序号、结果、错误和 Usage |
+| `events` | 按 sequence/cursor 增量读取事件，支持断线续传 |
+| `abort` | 请求取消；Runtime 继续负责把取消收敛为唯一终态 |
 
-```mermaid
-flowchart TB
-    subgraph Standalone[Standalone]
-        SClient[Caller] --> SRuntime[Runtime API]
-        SRuntime --> SDB[(Runtime PostgreSQL)]
-        SRuntime --> SOpenClaw[OpenClaw]
-    end
+## Agent、Skill 和制品
 
-    subgraph Managed[Managed by Product Backend]
-        MClient[Frontend] --> MBackend[Backend A/B]
-        MBackend --> MSDK[Host Adapter / SDK]
-        MSDK --> MRuntime[Runtime API]
-        MRuntime --> MDB[(Runtime PostgreSQL)]
-        MRuntime --> MOpenClaw[OpenClaw]
-        MRuntime -->|result / usage callbacks| MBackend
-    end
+Agent Profile 不是一段临时 Prompt，而是一个可发布、可版本化的能力入口。Huahuo 的设计源通常位于：
+
+```text
+agent/<agent_name>/workspace/
+├── AGENTS.md                 # 长期行为与任务边界
+├── SOUL.md                   # 人格和表达姿态
+├── MEMORY.md                 # 允许保留的稳定记忆规则
+├── TOOLS.md                  # 工具使用规则，不负责注册工具
+├── capability-catalog.json   # Agent 声明需要的能力
+├── skills/                   # Agent 源内的 Skill 设计
+├── knowledge/                # 只属于该 Agent 的领域知识
+└── protocols/                # 输入、输出和业务协议
 ```
 
-- Standalone 适合内部服务、脚本和无复杂业务对象的调用方。
-- Managed 适合正式产品，由 Backend 管用户、Workspace、账务、消息和业务写回。
-- 两种模式共用同一 Run/Event/Scheduler/Recovery 核心，不复制 Runtime。
+发布时不是把这个目录随意复制到服务器，而是生成不可变制品：
 
-## 17. 当前不能做的事情
+```text
+设计源
+  → 校验 Agent / Skill / Knowledge / Tool 声明
+  → 构建 runtime-agents/<agentProfile>/
+  → 构建 runtime-skills/<skillProfile>/
+  → 更新 agent-routing-manifest.json
+  → 更新 meta-manifest.json 与 runtime-config-overrides.json
+  → 生成带版本与内容身份的 Release Bundle
+  → 提升 activeCatalogRevision
+```
 
-在完成下一阶段之前，不要：
+一次 Agent Release 至少要固定：Agent 文件版本、候选/必需 Skill、Knowledge 根和精确引用、Tool Policy、允许的执行 Scope、Runtime Config、输入策略及输出协议。Backend 只从生效 Catalog 解析这些事实，不能从目录名猜版本。
 
-- 在本目录运行 `go build ./...` 并期待成功。
-- 直接复制 `cut-boundary-reference/deployment` 到新服务器。
-- 把当前 Huahuo config 当成通用默认配置。
-- 让浏览器调用 `/enterprise.runtime/*`。
-- 让新 Backend 自己生成或伪造 fencing token、RunTicket 或 Workspace 路径。
-- 宣称本快照已经完成独立运行、兼容性测试或生产验收。
-- 删除 `cut-boundary-reference` 中的旧连接点，直到相应的新接口已经实现并验证。
+### Huahuo 如何选择 Profile 和 Skill
 
-## 18. 本次操作声明
+```text
+已鉴权 Workspace + TaskIntent + executionScope
+        ↓
+activeCatalogRevision
+        ↓
+L1 Agent Router
+按 intent category、task type、scope、状态和优先级筛选 Agent Profile
+        ↓
+SkillRegistry
+在该 Agent 的候选集合中按 active、权限、任务能力和上限筛选 Skill
+        ↓
+AgentRunPlan
+冻结 Agent / Skills / Knowledge / Tools / Output / Workspace 版本
+```
 
-- 原始目录：只读取和复制，没有移动或修改。
-- 新目录：创建 `E:\Rungtime`，复制源码并新增本 README。
-- 服务器：未连接，未部署，未重启任何服务。
-- 测试：按要求未运行。
-- 构建：未运行。
-- 哈希校验：按要求未运行。
-- 当前结论：物理抽取和边界隔离已完成；逻辑解耦留待下一阶段补接口。
+App 可以提交 Catalog 中公开的 `agentProfileId` 和 `skillProfileIds`，但不能提交内部文件路径、Release Hash、Provider Key 或任意工具名。动态路由也只能从服务端候选集合选择；模型不能创造未注册 Skill。Plan 一旦冻结，重试、恢复和终态解析都复用同一个 Plan，不在结束时重新路由。
+
+`SKILL.md` 应描述任务方法、输入要求、读取顺序、工具边界、输出 Schema 和失败条件。它不是堆放全部知识正文的地方。
+
+### 知识应该放在哪里
+
+| 知识类型 | 推荐位置 | 装载方式 |
+| --- | --- | --- |
+| Agent 专属知识 | 设计源 `agent/<name>/workspace/knowledge/`；发布后进入 `runtime-agents/<profile>/knowledge/` | 只随对应 Agent Release 可见 |
+| Skill 专属参考 | `runtime-skills/<skillProfile>/references/` | 由该 Skill 的 `SKILL.md` 按需读取 |
+| 平台通用知识 | `templates/knowledge/<domain>/INDEX.md` 及其子文档 | Skill 声明精确 `knowledgeRefs` 后按 Release 装载 |
+| 用户私有长期知识 | 用户 Formal Workspace 的 `profile/`、`materials/`、`resources/` 等 | 先用 `workspace_search` 找逻辑路径，再用 `read` 读取 |
+| 单次任务材料 | Runtime Workspace 的 `input/` | 只在本次 Run 有效，结束后不作为长期事实源 |
+
+`knowledgeRoots` 只是授权边界，不表示把整个知识树塞进上下文。每个 Skill 应从一个小的 `INDEX.md` 或 `OVERVIEW.md` 开始，声明精确、受版本约束的 `knowledgeRefs`，再按需读取更深内容。
+
+### 怎样增加一个 Tool
+
+当前企业契约只向 Agent 暴露 `read`、`workspace_search` 和条件授权的 `write`。新增 Tool 必须走完整发布链：
+
+1. 在 Agent Core、Harness Driver 或受控 Plugin 中实现 Tool 与 JSON Schema。
+2. 在 Runtime `capabilities` 中发布名称、来源、版本、Schema 身份和 `ready` 状态。
+3. 在服务端 Tool Catalog、Agent `capability-catalog.json` 和 Tool Policy Profile 中授权。
+4. 让需要它的 Skill 声明 required capability，Planning 才能把它写入 `requiredTools`。
+5. Runtime 为单次 Run 生成最小权限、带签名的 `tools.allow`；`deny` 始终优先。
+6. Tool 调用必须验证 Tenant、Workspace、Run 和 Fence，并记录 started/finished/rejected 审计事件。
+7. 发布新的 Agent/Skill/Runtime Release 后，只有能力握手通过的 Host 才能接收该 Run。
+
+仅修改 Prompt、`TOOLS.md` 或 allow-list 不等于 Tool 已实现。Backend 和前端也不能临时注入未注册 Tool。
+
+## 状态机与生产并发
+
+内部状态机保留足够多的阶段用于恢复和审计：
+
+```text
+created
+  → resolving_intent
+  → planning
+  → awaiting_confirmation?
+  → admission_pending
+  → queued
+  → reserving
+  → dispatched
+  → accepted
+  → materializing
+  → running
+  → finalizing
+  → succeeded | failed | cancelled | timeout | orphaned
+```
+
+前端只需要较小的公开状态集合：
+
+```text
+resolving → planning → awaiting_confirmation?
+          → queued → running / aborting
+          → succeeded | failed | cancelled | timeout
+```
+
+并发可靠性不靠“启动更多进程”保证：
+
+- Scheduler 只把 Run 分配给版本、能力和空闲 Slot 都满足要求的 Host。
+- Lease 表示当前执行者仍然活着；心跳超时后 Recovery 才能接管。
+- FencingToken 每次重新取得所有权都递增，旧 Worker 即使晚到也不能写事件或终态。
+- Submit、事件 sequence、结果投影和终态收敛都必须幂等。
+- Host 丢失、回调中断或进程重启后，Recovery 从持久化事实继续，不从日志猜状态。
+- 终态只有一个；释放 Slot、Usage 结算和业务回写都有可恢复检查点。
+
+## 长上下文压缩
+
+压缩不是简单截断聊天记录。Runtime 以“即将发送给当前 Provider 的完整 Prompt”作为唯一压力事实，其中包括历史、旧摘要、工具结果、系统与 Workspace 规则、Tool Schema、当前请求、图像和 Provider 包装。
+
+```text
+组装完整 Provider Prompt
+        ↓
+测量当前模型的 Prompt 压力
+        ├── 未超预算 → 发送给 Provider
+        └── 超预算
+              ├── 有可压缩历史
+              │     → 旧历史和工具证据生成结构化检查点
+              │     → 保留近期原文尾部；必要时进入 summary-only
+              │     → 重组完整 Prompt 并再次测量
+              │     → 仍超预算且还能推进边界时继续压缩
+              └── 不可压缩部分自身超预算
+                    → 明确失败，不静默删除当前请求或安全规则
+```
+
+结构化检查点至少保留：用户目标、约束、关键决策、已完成工作、工具证据、当前状态、未完成请求和下一步。压缩成功的条件不是“生成过摘要”，而是重组后的完整 Prompt 已进入当前模型预算。
+
+事件存储另有一层保留压缩：Run 终态后可以清理旧 `draft_delta` 前缀，但必须保留终态与最终 Assistant；过旧 cursor 返回明确 gap，不能伪造连续序列。
+
+## 替换 OpenClaw
+
+Control Plane 不应依赖 OpenClaw 私有 DTO。要接入 Codex 或其他 Harness，只需实现同一 Driver 边界：
+
+| Driver 能力 | 必须保证的语义 |
+| --- | --- |
+| Submit | 接收冻结 Plan、Manifest、Session、Tool Policy 和输入，幂等启动一次执行 |
+| Status / Events | 把 Harness 原生事件归一化为有序 Runtime Event |
+| Abort | 能取消当前模型/工具执行，并最终回报唯一终态 |
+| Capabilities | 报告版本、工具、策略、上下文和取消能力，供 Scheduler 匹配 |
+| Session | 维护产品 Thread 与 Harness 原生 Session 的稳定映射 |
+| Workspace | 只访问物化后的逻辑 Workspace，不能越过 Run 授权边界 |
+| Result / Usage | 返回标准终态、Assistant 结果、错误分类和 Usage |
+
+因此替换 Harness 时，Backend 的用户、Thread、Workspace、Agent Catalog 和结果表不需要跟着重写；变化集中在 Driver 与少量 Runtime Config。
+
+## 让 Codex 接入你的 Backend
+
+把下面这段任务连同你的 Backend 仓库和本仓库交给 Codex 或其他编程 Agent：
+
+```text
+目标：把 <YOUR_BACKEND> 作为新的 Host 接入 Yuex Agent Runtime。
+
+先阅读：
+- README.md
+- extracted/go-runtime-control-plane/internal/runtime/
+- extracted/go-runtime-adapter/cmd/openclaw-runtime-adapter/
+- extracted/openclaw-driver/overlay/
+- cut-boundary-reference/ 中与 API、Worker、Storage 对应的参考实现
+
+请先输出现有 Backend 的映射表，再实施：
+1. 找到 Tenant/User/Workspace/Thread/Task/Result 的真实数据所有者。
+2. 实现 Host Adapter：IdentityProvider、WorkspaceProvider、SessionProvider、
+   AgentCatalogProvider、RuntimeConfigProvider、ObjectProvider、EventSink、ResultSink。
+3. 将前端请求解析成服务端 TaskIntent；只使用 active Catalog 中的公开 Profile。
+4. 冻结 AgentRunPlan、RuntimeInputManifest、CapabilityHash 和 RunTicket。
+5. 接入 submit/status/events/abort/capabilities，不让前端直接访问 Runtime。
+6. 将 Runtime Event 投影为 Backend 的 SSE/查询模型，将唯一终态写回业务结果。
+7. 保留 Lease、Fencing、幂等、cursor、取消、恢复和 Usage 语义。
+8. 不把数据库凭据、Provider Key、真实 Workspace 路径或内部 Session Store 暴露给模型。
+
+交付物：
+- Backend 到 Runtime 的字段映射
+- Adapter 接口与实现
+- 必要的运行存储迁移
+- 配置示例和本地启动方式
+- 提交、断线续传、取消、Host 丢失恢复、旧 Fence 拒写的 focused tests
+
+遇到 Huahuo 专属 import 或回调时，用清晰的 port/interface 隔离；
+不要把另一个 Backend 的业务表复制进 Runtime Core。
+```
+
+## 从哪里读代码
+
+| 目录 | 内容 |
+| --- | --- |
+| `extracted/go-runtime-control-plane/internal/runtime/` | Plan、Scheduler、Host、Capacity、Lease、Fence、Recovery、Event、Usage、Workspace Materialization |
+| `extracted/go-runtime-adapter/cmd/openclaw-runtime-adapter/` | Go Runtime Host、HTTP transport、Host 注册/心跳和 Gateway bridge |
+| `extracted/openclaw-driver/overlay/` | OpenClaw 企业 Run、策略、能力握手、事件和恢复扩展 |
+| `extracted/openclaw-driver/tooling/` | Overlay 安装、契约生成和源检查工具 |
+| `cut-boundary-reference/` | Huahuo Backend 的 API、Worker、Storage、Search 和部署接线参考，不属于独立 Runtime Core |
+
+## License
+
+Huahuo 创作的代码按 [GNU Affero General Public License v3.0 only](LICENSE) 发布。OpenClaw 及其他第三方组件继续适用各自许可证，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
