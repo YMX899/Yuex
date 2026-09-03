@@ -10,7 +10,7 @@ Codex、OpenClaw、Grok Build 这类 Agent Harness，已经能很好地帮助个
 
 当前 Driver 接入 [OpenClaw](https://github.com/openclaw/openclaw)。感谢 OpenClaw 社区提供开源的 Agent Loop、Session 与 Tool 基础。OpenClaw Agent Core 不是本项目的原创代码；Yuex 实现的是它上方的企业运行层。Driver 是明确边界，后续也可以替换为 Codex 或其他优秀的 Agent Harness。
 
-> 本仓库是从实际工程中复制出来的 Runtime 快照。部分 Go import、持久化接口和回调仍保留原系统边界，因此它目前适合阅读、拆分和二次集成，不是下载后即可独立启动的发行包。
+> Yuex 刻意采用源码级交付，而不是把它封装成一条 `npm install` 或一键启动命令。今天的 AI 辅助编程已经能够高效理解代码、补齐接口并适配现有工程；相比先安装一个通用中间层，再围绕黑盒配置反复修改，保留清晰的程序结构、真实的运行机制和明确的接入边界，更方便团队让自己的 AI 按业务需要完成集成。本仓库因此不追求“下载后无需修改即可运行”，而是提供一套来自实际工程、可阅读、可验证、可继续演进的 Runtime 实现。接入方需要连接自己的持久化、Backend 回调和部署环境，并对最终组合进行验证。
 
 ## Architecture
 
