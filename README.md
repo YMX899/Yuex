@@ -412,6 +412,197 @@ Control Plane 持久化 Host 心跳、Lease、Fence、Dispatch、事件游标和
 
 Runtime 只保存原始 Usage。Backend 应在提交前预留配额，在终态时一次性记录 Usage 并结算；失败、取消与超时如何退款或扣除，由产品政策决定。
 
+## Common changes
+
+下面只列最常见的改动。每个问题都可以单独展开。本仓库保存 Runtime 快照；示例中的 `agent-source/`、Provider 配置和发布动作属于接入工程需要提供的部分，目录名可以按自己的仓库调整，但发布与权限边界不应省略。
+
+<details>
+<summary><strong>Q: 我想新增一个 Tool，需要改哪些地方？</strong></summary>
+
+先判断它是不是 Tool。只有 Agent 需要在推理过程中自行决定是否调用的能力，才应该进入 Tool Loop；固定发生在 Run 前后的业务步骤更适合放在 Backend 或 Worker 中。
+
+一个新 Tool 至少经过以下五层：
+
+```text
+1. Tool contract       唯一名称、输入 JSON Schema、输出和错误
+2. Tool implementation 真正执行 HTTP、数据库或其他受控操作
+3. Host capability     Runtime Host 声明这个 Tool 已安装且可用
+4. Agent permission    Agent Catalog 和 Tool Policy 允许哪些 Agent 使用
+5. Agent instructions  TOOLS.md / SKILL.md 说明什么时候调用、怎样判断成功
+```
+
+以新增 `image_generation` 为例：
+
+```json
+{
+  "name": "image_generation",
+  "input": {
+    "prompt": "required string",
+    "aspectRatio": "optional string",
+    "style": "optional string",
+    "referenceResourceIds": "optional authorized resource ids"
+  }
+}
+```
+
+Schema 应拒绝未知字段；引用图片只能使用当前 Run 已冻结或当前 Workspace 已授权的 Resource ID，不能让模型提交 URL、对象存储 Key 或本地路径。Provider、模型、凭据池和 Endpoint 由服务端配置决定，不能由 Tool 参数选择。
+
+实现后的调用链大致是：
+
+```text
+Agent calls image_generation
+  -> Driver checks the signed Tool Policy and call budget
+  -> private Run context reaches the Backend Tool bridge
+  -> Provider Pool selects a credential lease
+  -> image Provider generates one result
+  -> result is staged, checked and promoted to a Resource
+  -> Tool receipt, Usage and output Resource return to the Run
+```
+
+最后，把 Tool 的名称和 Schema 加入 Host capability registry，使 Host 在 `capabilities` 中报告 ready；把它加入目标 Agent 的 `allowedTools` 和对应 Tool Policy；在相关 `TOOLS.md` 或 `SKILL.md` 中只写调用时机和成功标准。仅写提示词不会注册 Tool，仅注册实现也不会自动授权所有 Agent。
+
+</details>
+
+<details>
+<summary><strong>Q: 图像生成很慢，应该怎样接自己的异步 Worker？</strong></summary>
+
+现有图像生成模式复用 Runtime 的 Tool 调用、Provider Lease、超时、Usage 和结果提升，不要求每个 Tool 再建一套调度系统。Provider 能在一次有界调用中完成时，直接复用这条链路最简单。
+
+只有 Provider 必须排队、回调或长时间轮询时，才需要专用 Worker：
+
+```text
+Tool call
+  -> create ToolJob once by runId + toolCallId
+  -> enqueue
+  -> Worker leases ToolJob and keeps heartbeat
+  -> call/poll Provider
+  -> persist image Resource + raw Usage
+  -> write one terminal Tool receipt
+  -> wake the waiting Tool call
+  -> return the real image result to the Agent
+```
+
+`runId + toolCallId` 是幂等边界，同一次调用重投不能生成第二个 Job。Worker 需要 Lease/Fence、心跳、最大执行时间和终态唯一约束；接管后的旧 Worker 不能再写结果。Provider 返回的文件先进入 staging，检查类型、大小和内容后再提升为正式 Resource。
+
+不要把 `{status: "queued"}` 当成 Tool 成功返回给 Agent，否则模型可能继续回答“图片已经生成”或再次调用。Tool 层必须等待终态，或者 Driver 必须实现明确的暂停/恢复协议；最终只有真实可访问的图片 Resource 才算成功。
+
+</details>
+
+<details>
+<summary><strong>Q: read、write 和 Workspace 访问权限在哪里控制？</strong></summary>
+
+权限不是只写在 Workspace 文件里，而是四层同时收紧：
+
+| 层 | 控制什么 |
+| --- | --- |
+| `RuntimeInputManifest` | 本次 Run 实际能看到哪些文件；Manifest 外的文件不会被物化 |
+| `AgentRunPlan.requiredTools` | Planner 为本次任务选择哪些 Tool |
+| 签名 `RuntimePolicy.allowedTools` | Host 最终允许调用哪些 Tool，以及调用次数、读取字节和执行时间预算 |
+| Workspace mount / write lease | Workspace 是只读还是可写；可写时只能写哪些临时根目录 |
+
+`read` 只能读取已经进入 Run Workspace 的逻辑路径。`workspace_search` 应只返回有权查看的相对路径，再由 `read` 读取内容，不能暴露真实磁盘路径。普通 `write` 只用于本次 Run 的 `staging/` 和 `output/`；它不等于可以改用户的 Formal Workspace。
+
+如果 Agent 想修改长期资产，应返回结构化写回意图。Backend 再检查用户权限、目标版本和数据格式，最后由 Workspace/Asset Service 写入。不要通过扩大 `write` 的目录范围绕过这一步。
+
+</details>
+
+<details>
+<summary><strong>Q: 我想新增一个 Agent，完整流程是什么？</strong></summary>
+
+先在本地从 Agent 模板创建一个源码目录：
+
+```text
+agent-source/research_writer/
+├── AGENTS.md
+├── SOUL.md
+├── MEMORY.md
+├── TOOLS.md
+├── capability-catalog.json
+├── skills/
+├── knowledge/
+└── protocols/
+```
+
+然后完成三件事：
+
+1. 在 `capability-catalog.json` 和规划 Catalog 中声明稳定的 `agentProfile`、可处理的 intent/task type、候选 Skills、Knowledge roots、Tool Policy、Runtime Config、输入限制和执行范围。
+2. 先发布它依赖的 Skill/Knowledge，再发布 Agent 文件包。发布产物需要不可变的 Release ID、版本和内容摘要；通过校验后，才把 Catalog 的 current 指针切到新 Release。不要直接覆盖一个正在被 Run 使用的目录。
+3. 用一个新 Run 验证路由、选中的 Agent/Skill、物化文件、Tool allow-list、输出合同和终态写回。旧 Run 继续使用已经冻结的旧 Release，新 Run 才使用新版本。
+
+这里的“形成 L1”指 Planner 从生效 Catalog 中选出一个 `L1AgentManifestEntry`，不是把文件放进 Workspace 的 L1 原始材料层。一次 Run 只冻结一个 L1 Agent 包。
+
+运行时的组合顺序是：
+
+```text
+selected L1 Agent release
+  + selected Skill releases
+  + selected Knowledge releases
+  + authorized user Formal Workspace overrides
+  + current request and attachments
+  = one temporary Run Workspace
+```
+
+用户内容不会被打进公共 Agent Release。每个用户仍维护自己的 Formal Workspace；Composer 只允许它覆盖已授权的同名 Agent/Skill 路径，并只装入本次 Plan 选中的内容。因此公共 Agent 是底座，用户 Workspace 是运行时叠加层，两者分别版本化。
+
+</details>
+
+<details>
+<summary><strong>Q: 只想新增一个 Skill，需要新建 Agent 吗？</strong></summary>
+
+通常不需要。把 `SKILL.md`、专属 `references/` 和输出合同作为独立 Skill Release 发布，再把 Skill 加入已有 Agent 的 `candidateSkillProfiles`。Planner 只有在当前任务匹配时才选它，未选中的 Skill 不会进入 Run Workspace。
+
+方法说明放在 `SKILL.md`；仅该 Skill 使用的资料放在 `skills/<skill>/references/`；Agent 长期通用知识放在 Agent 包的 `knowledge/`；多个 Agent 共用的大型知识应单独发布为版本化 Knowledge Release。不要把整套知识复制进每个提示词。
+
+</details>
+
+<details>
+<summary><strong>Q: 我想换模型、调整温度或上下文窗口，应该改哪里？</strong></summary>
+
+模型设置分成三层，不要只改一个模型名：
+
+| 配置 | 内容 |
+| --- | --- |
+| Model Profile | Provider、模型 ID、API 类型、输入模态、凭据池、上下文窗口、最大输出、超时和默认参数 |
+| Runtime Config | 选用哪个 Model Profile、thinking/reasoning、参数、Run/Tool 上限、插件、Session Store 和 Artifact Store |
+| Agent Catalog | 哪个 Agent 可以选择哪些 Runtime Config |
+
+例如：
+
+```json
+{
+  "modelProfile": {
+    "id": "writer-model-v2",
+    "provider": "provider-name",
+    "model": "model-id",
+    "input": ["text"],
+    "authPoolId": "runtime-model-writer",
+    "contextWindow": 131072,
+    "maxTokens": 8192,
+    "timeoutSeconds": 600
+  },
+  "runtimeConfig": {
+    "id": "content-default",
+    "version": "v2",
+    "model": {
+      "modelProfileId": "writer-model-v2",
+      "thinking": "off",
+      "reasoning": "stream",
+      "params": {"temperature": 0.3}
+    },
+    "limits": {
+      "maxRunSeconds": 3600,
+      "maxToolCalls": 80
+    }
+  }
+}
+```
+
+新增或更换模型时，先配置服务端 Credential Pool 和 Secret 引用，再发布新的 Model Profile/Runtime Config 版本，最后把新 Runtime Config 加到目标 Agent 的 Catalog。Provider Key 不能写进 Agent 文件、Runtime Config、Run DTO 或日志。
+
+如果只是调整 `temperature` 或 `top_p`，可以在 Runtime Config 的 `overridePolicy` 允许范围内覆盖；模型、Provider、上下文窗口和凭据池这类执行身份应通过新版本发布。Plan 会冻结 `runtimeConfigId + version`，因此配置切换只影响后续 Run，不会让正在执行的任务中途换模型。
+
+</details>
+
 ## Integration checklist
 
 接入一个新的 Backend，至少需要实现以下边界：
